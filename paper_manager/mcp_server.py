@@ -180,6 +180,46 @@ def ingest_pdf(path: str, engine: str = "datalab") -> str:
     )
 
 
+@mcp.tool()
+def related_papers(paper_id: int, top_k: int = 5) -> str:
+    """查看某篇论文的邻居：引文关系（库内引用/被引）+ 语义相近论文。
+
+    用于顺着引用链追溯方法源头、找后续工作、或发现同主题论文。
+    引文数据需要先用 ingest 侧的 fetch-citations（CLI）抓取过才完整；
+    语义近邻基于论文向量，始终可用。
+
+    Args:
+        paper_id: 论文编号（search_papers / list_papers 返回）。
+        top_k: 语义近邻数量，默认 5。
+    """
+    from .retriever import related_papers as _related
+
+    conn = db.connect()
+    try:
+        r = _related(conn, paper_id, top_k=top_k, embedder=EmbeddingClient.from_env())
+    except ValueError:
+        return f"paper_id={paper_id} 不存在"
+    finally:
+        conn.close()
+
+    lines = [f"# [{r['paper_id']}] {r['title']}", ""]
+    if r["cites"]:
+        lines.append("## 引用（库内，方法/背景来源）")
+        lines += [f"- [{c['paper_id']}] {c['title']} ({c.get('year') or '?'})" for c in r["cites"]]
+    if r["cited_by"]:
+        lines.append("## 被引（库内，后续工作）")
+        lines += [f"- [{c['paper_id']}] {c['title']} ({c.get('year') or '?'})" for c in r["cited_by"]]
+    if r["semantic"]:
+        lines.append("## 语义相近")
+        lines += [
+            f"- [{c['paper_id']}] {c['title']} ({c.get('year') or '?'}，相似度 {c['similarity']})"
+            for c in r["semantic"]
+        ]
+    if len(lines) == 2:
+        return f"[{paper_id}] {r['title']}：暂无库内邻居。引文数据可由 CLI fetch-citations 抓取。"
+    return "\n".join(lines)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Paper manager MCP server")
     ap.add_argument("--http", action="store_true", help="streamable HTTP transport")

@@ -119,12 +119,49 @@ python evals/run_eval.py --rewrite   # 加上 LLM 查询改写（非确定性，
 改任何检索参数（RRF k、chunk 大小、切块策略）后重跑一遍，防止调坏。
 基线会随用例库更新而变化，重大改动后在 README 记录新基线。
 
+## 可视化界面（时间轴 + 搜索 + 导入）
+
+```powershell
+python -m paper_manager.server                 # http://127.0.0.1:8830
+python -m paper_manager.server --host 0.0.0.0  # Tailscale 内其他设备可访问
+```
+
+- **时间轴**：横轴为发表年份，论文按引文关系分簇排布成行；实线箭头 = 引文关系
+  （指向被引论文），虚线 = 语义相近（论文向量余弦 ≥ 0.55 的 top-2 邻居）。
+  支持滚轮缩放、拖拽平移、悬停高亮邻居、点击查看详情；
+- **详情面板**：摘要卡、摘要、DOI 链接、引文/被引计数，以及三类可点击邻居
+  （库内引用、库内被引、语义相近）——顺着引用链追溯方法源头；
+- **搜索**：走与 MCP 相同的两阶段混合检索，结果卡点击后定位到时间轴节点；
+- **导入**：右上角选择引擎（datalab/local）拖入 PDF，导入后时间轴自动刷新；
+- **抓取引文**：详情面板一键从 OpenAlex 拉取该论文的参考文献与被引列表。
+
+## 引文图（P1）
+
+引文数据来自 [OpenAlex](https://openalex.org)（免费无需 key），
+Semantic Scholar 作为备用源（其未认证通道限流严格；可免费申请
+`S2_API_KEY` 填入 .env 提高可靠性）。
+
+```powershell
+python cli.py fetch-citations        # 抓取所有未抓取论文的引文关系
+python cli.py fetch-citations 3      # 只抓某一篇
+python cli.py related 3              # 查看邻居：库内引用/被引 + 语义相近
+```
+
+注意事项：
+
+- 很新的 arXiv 论文在 OpenAlex 上可能**没有参考文献列表**（被引列表通常可用）；
+  少数论文（如 GraphRAG 原文）暂时未被收录——过段时间重跑 fetch-citations 即可；
+- arXiv 预印本没有印刷版 DOI，入库时自动合成 `10.48550/arXiv.<id>` 用于解析；
+- 引文行按 DOI 优先、归一化标题包含匹配兜底关联到库内论文（容忍 PDF 换行截断的标题）；
+- GraphRAG 这类记录一旦被 OpenAlex 收录，重跑 fetch-citations 后时间轴上
+  就会出现真正的引文连线。
+
 ## Roadmap
 
-- **P1 引文图**：从 DOI 调 Semantic Scholar / OpenAlex 免费 API 拉
-  references/citations，`related_papers` 工具走 SQL 图遍历（不花 LLM 钱）。
+- **P1 引文图（已完成）**：OpenAlex/Semantic Scholar 抓取、`related_papers`
+  工具（CLI + MCP）、时间轴可视化。
 - **P2 概念图（LightRAG 式）**：LLM 从 chunk 抽方法/数据集/任务实体与关系，
-  双层检索（实体邻域扩展 → 回取 chunk），pyvis 可视化。
+  双层检索（实体邻域扩展 → 回取 chunk），接入可视化界面。
 
 ## 设计说明
 

@@ -102,6 +102,63 @@ def cmd_read(args: argparse.Namespace) -> None:
         conn.close()
 
 
+def cmd_fetch_citations(args: argparse.Namespace) -> None:
+    from paper_manager import scholar
+
+    conn = db.connect()
+    try:
+        if args.paper_id:
+            rows = [db.get_paper(conn, args.paper_id)]
+            rows = [r for r in rows if r]
+        else:
+            rows = db.papers_without_citations(conn)
+        if not rows:
+            print("没有待抓取的论文（全部已有引文数据）")
+            return
+        import time as _time
+
+        for i, row in enumerate(rows):
+            try:
+                r = scholar.fetch_citations(conn, row["id"])
+                print(
+                    f"[{r['status']}] {r['title'][:50]} — "
+                    f"参考文献 {r['refs']}，被引 {r['cited']}"
+                )
+            except Exception as exc:
+                print(f"[error] {row['title'][:50]}: {type(exc).__name__}: {exc}")
+            if i < len(rows) - 1:
+                _time.sleep(1.5)  # S2 unauthenticated pool: ~100 req / 5 min
+    finally:
+        conn.close()
+
+
+def cmd_related(args: argparse.Namespace) -> None:
+    from paper_manager.retriever import related_papers
+
+    conn = db.connect()
+    try:
+        r = related_papers(
+            conn, args.paper_id, top_k=args.top_k,
+            embedder=EmbeddingClient.from_env(),
+        )
+        print(f"# [{r['paper_id']}] {r['title']}\n")
+        for key, label in (("cites", "引用（库内）"), ("cited_by", "被引（库内）")):
+            if r[key]:
+                print(f"## {label}")
+                for c in r[key]:
+                    year = f" ({c['year']})" if c["year"] else ""
+                    print(f"  [{c['paper_id']}] {c['title']}{year}")
+        if r["semantic"]:
+            print("## 语义相近")
+            for c in r["semantic"]:
+                year = f" ({c['year']})" if c["year"] else ""
+                print(f"  [{c['paper_id']}] {c['title']}{year} — 相似度 {c['similarity']}")
+        if not (r["cites"] or r["cited_by"] or r["semantic"]):
+            print("暂无邻居：先 python cli.py fetch-citations 抓取引文")
+    finally:
+        conn.close()
+
+
 def cmd_list(_: argparse.Namespace) -> None:
     conn = db.connect()
     try:
@@ -180,6 +237,16 @@ def main() -> None:
 
     p = sub.add_parser("backfill", help="补齐存量论文的论文级索引（FTS+向量）")
     p.set_defaults(func=cmd_backfill)
+
+    p = sub.add_parser("fetch-citations", help="从 Semantic Scholar 抓取引文关系")
+    p.add_argument("paper_id", type=int, nargs="?", default=None)
+    p.add_argument("--all", action="store_true", help="抓取所有未抓取的论文")
+    p.set_defaults(func=cmd_fetch_citations)
+
+    p = sub.add_parser("related", help="某篇论文的邻居（引文+语义）")
+    p.add_argument("paper_id", type=int)
+    p.add_argument("-k", "--top-k", type=int, default=5)
+    p.set_defaults(func=cmd_related)
 
     args = ap.parse_args()
     args.func(args)

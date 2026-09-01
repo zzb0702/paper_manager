@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper Manager · 论文关系时间轴</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #161d24; --line: #232d38; --text: #d8e0e8;
+    --dim: #7b8a99; --accent: #4f9cf9; --amber: #f5a623; --ok: #58c98b;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin-right: 8px; white-space: nowrap; }
+  #q { flex: 1; min-width: 220px; background: #0b1015; border: 1px solid var(--line); color: var(--text); padding: 8px 12px; border-radius: 8px; }
+  button, select { background: #1d2731; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 13px; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: wait; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage { flex: 1; position: relative; min-width: 0; }
+  svg { display: block; width: 100%; height: 100%; cursor: grab; }
+  svg.panning { cursor: grabbing; }
+  #hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); flex-direction: column; gap: 10px; }
+  aside { width: 380px; border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 16px; display: none; }
+  aside.open { display: block; }
+  aside h2 { font-size: 16px; margin-bottom: 6px; }
+  aside .meta { color: var(--dim); font-size: 12px; margin-bottom: 10px; }
+  aside .summary { background: #0b1015; border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 10px 0; font-size: 13px; }
+  aside .abstract { color: var(--dim); font-size: 12px; white-space: pre-wrap; max-height: 180px; overflow-y: auto; }
+  aside h3 { font-size: 13px; color: var(--accent); margin: 14px 0 4px; }
+  aside .rel { padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  aside .rel:hover { background: #1d2731; }
+  aside .rel small { color: var(--dim); }
+  #results { position: absolute; top: 10px; left: 10px; width: 360px; max-height: 60%; overflow-y: auto; z-index: 5; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; font-size: 13px; }
+  .card:hover { border-color: var(--accent); }
+  .card b { display: block; margin-bottom: 2px; }
+  .card small { color: var(--dim); }
+  .card .snip { color: var(--dim); margin-top: 4px; font-size: 12px; }
+  #toasts { position: fixed; bottom: 16px; right: 16px; z-index: 50; }
+  .toast { background: #1d2731; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 14px; margin-top: 8px; max-width: 420px; font-size: 13px; }
+  .toast.err { border-left-color: #e4574f; }
+  .toast.ok { border-left-color: var(--ok); }
+  .legend { position: absolute; bottom: 10px; left: 10px; color: var(--dim); font-size: 12px; background: rgba(15,20,25,.8); padding: 6px 10px; border-radius: 8px; }
+  .legend i { display: inline-block; width: 22px; height: 0; border-top: 2px solid var(--amber); vertical-align: middle; margin: 0 4px 2px 10px; }
+  .legend i.sim { border-top: 2px dashed #556; }
+  #spin { position: absolute; top: 12px; right: 12px; color: var(--dim); display: none; }
+  .badge { font-size: 11px; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; color: var(--dim); margin-left: 6px; }
+  #panelClose { float: right; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📚 论文时间轴</h1>
+  <input id="q" placeholder="搜索论文（回车，如：注意力机制 长文本 加速）">
+  <button id="btnSearch">搜索</button>
+  <span style="flex:1"></span>
+  <select id="engine">
+    <option value="datalab">datalab（高保真，按页计费）</option>
+    <option value="local">local（免费文本抽取）</option>
+  </select>
+  <input type="file" id="file" accept=".pdf" multiple hidden>
+  <button id="btnImport">📥 导入 PDF</button>
+  <button id="btnReload" title="重新加载">↻</button>
+</header>
+<main>
+  <div id="stage">
+    <div id="spin">加载中…</div>
+    <div id="hint" style="display:none">
+      <div style="font-size:40px">📚</div>
+      <div>论文库为空 — 点右上角「📥 导入 PDF」开始</div>
+    </div>
+    <div id="results"></div>
+    <div class="legend">
+      <i></i>引文关系（箭头指向被引论文）
+      <i class="sim"></i>语义相近
+      <span style="margin-left:10px">横轴 = 发表年份</span>
+    </div>
+    <svg id="svg"><defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#f5a623"></path>
+      </marker>
+    </defs><g id="view"></g></svg>
+  </div>
+  <aside id="panel">
+    <div id="panelBody"></div>
+  </aside>
+</main>
+<div id="toasts"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const PALETTE = ["#4f9cf9","#f5a623","#7dd87d","#e46fb2","#b07df9","#5fd4d0","#f9e04f","#f97b5f","#9aa7b5","#6bd66b"];
+const ROW = 74, PADX = 90, PADTOP = 60;
+let DATA = { nodes: [], edges: [] };
+let LAYOUT = {};          // pid -> {x, y, r}
+let VB = null;            // viewBox {x,y,w,h}
+let loading = 0;
+
+function toast(msg, cls = "") {
+  const d = document.createElement("div");
+  d.className = "toast " + cls;
+  d.textContent = msg;
+  $("toasts").appendChild(d);
+  setTimeout(() => d.remove(), 6000);
+}
+function spin(on) { $("spin").style.display = on ? "block" : "none"; }
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let msg = r.status + " " + r.statusText;
+    try { msg = (await r.json()).detail || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+function esc(s) {
+  return (s || "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+}
+
+// ---------- layout ----------
+function computeLayout() {
+  const nodes = DATA.nodes, edges = DATA.edges.filter(e => e.kind === "citation");
+  const years = nodes.map(n => n.year || 2024);
+  let minY = Math.min(...years), maxY = Math.max(...years);
+  if (maxY - minY < 2) { minY -= 1; maxY += 1; }  // center a single-year axis
+  const span = Math.max(maxY - minY, 1);
+  const W = Math.max($("stage").clientWidth, 900);
+  const step = (W - PADX * 2) / span;
+
+  // lanes: connected components (citation graph), ordered by earliest year
+  const parent = {};
+  nodes.forEach(n => parent[n.id] = n.id);
+  const find = x => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+  edges.forEach(e => { const a = find(e.src), b = find(e.dst); if (a !== b) parent[a] = b; });
+  const comps = {};
+  nodes.forEach(n => {
+    const r = find(n.id);
+    (comps[r] = comps[r] || []).push(n);
+  });
+  const ordered = Object.values(comps).sort((a, b) =>
+    Math.min(...a.map(n => n.year || 2024)) - Math.min(...b.map(n => n.year || 2024)));
+
+  const laneOf = {};
+  const groupCount = {};
+  LAYOUT = {};
+  ordered.forEach((comp, lane) => {
+    comp.sort((a, b) => (a.year || 2024) - (b.year || 2024) || a.id - b.id);
+    comp.forEach(n => {
+      const year = n.year || 2024;
+      const key = lane + ":" + year;
+      const i = groupCount[key] = (groupCount[key] || 0);
+      groupCount[key]++;
+      const x = PADX + (year - minY) * step + (i ? i * 20 : 0);
+      const y = PADTOP + lane * ROW + i * 14;
+      LAYOUT[n.id] = { x, y, r: 7 };
+      laneOf[n.id] = lane;
+    });
+  });
+  const H = PADTOP + ordered.length * ROW + 70;
+  return { W, H, minY, maxY, step, lanes: ordered.length };
+}
+
+function render() {
+  const svg = $("svg"), view = $("view");
+  const { W, H, minY, maxY, step } = computeLayout();
+  const pos = (id) => LAYOUT[id] || { x: PADX, y: PADTOP, r: 7 };
+
+  let axis = "";
+  for (let y = minY; y <= maxY; y++) {
+    const x = PADX + (y - minY) * step;
+    axis += `<line x1="${x}" y1="30" x2="${x}" y2="${H - 44}" stroke="#1a222b" stroke-width="1"/>` +
+            `<text x="${x}" y="22" fill="#7b8a99" font-size="12" text-anchor="middle">${y}</text>`;
+  }
+
+  const adj = {};
+  DATA.edges.forEach(e => {
+    (adj[e.src] = adj[e.src] || []).push(e);
+    (adj[e.dst] = adj[e.dst] || []).push(e);
+  });
+
+  let edgesHtml = "";
+  DATA.edges.forEach((e, i) => {
+    const a = pos(e.src), b = pos(e.dst);
+    const mx = (a.x + b.x) / 2;
+    if (e.kind === "citation") {
+      edgesHtml += `<path class="ed" data-i="${i}" d="M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x - 9} ${b.y}" fill="none" stroke="#f5a623" stroke-opacity=".55" stroke-width="1.6" marker-end="url(#arrow)"/>`;
+    } else {
+      edgesHtml += `<path class="ed" data-i="${i}" d="M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}" fill="none" stroke="#4a5866" stroke-opacity=".5" stroke-width="1" stroke-dasharray="4 4"/>`;
+    }
+  });
+
+  let nodesHtml = "";
+  DATA.nodes.forEach(n => {
+    const p = pos(n.id);
+    const color = PALETTE[n.cluster % PALETTE.length];
+    const t = esc(n.title.length > 34 ? n.title.slice(0, 33) + "…" : n.title);
+    nodesHtml +=
+      `<g class="nd" data-id="${n.id}" style="cursor:pointer">` +
+      `<circle cx="${p.x}" cy="${p.y}" r="${p.r}" fill="${color}" stroke="#0f1419" stroke-width="2"><title>${esc(n.title)} (${n.year || "?"})</title></circle>` +
+      `<text x="${p.x}" y="${p.y + 22}" fill="#aeb9c4" font-size="11" text-anchor="middle">${t}</text></g>`;
+  });
+
+  view.innerHTML = axis + edgesHtml + nodesHtml;
+  const w = $("stage").clientWidth;
+  VB = { x: 0, y: 0, w: Math.max(w, 900), h: H, W, H };
+  applyVB();
+  bindHover();
+  $("hint").style.display = DATA.nodes.length ? "none" : "flex";
+}
+
+function applyVB() {
+  $("svg").setAttribute("viewBox", `${VB.x} ${VB.y} ${VB.w} ${VB.h}`);
+}
+
+// ---------- hover / click ----------
+function bindHover() {
+  const view = $("view");
+  view.querySelectorAll(".nd").forEach(g => {
+    g.addEventListener("mouseenter", () => highlight(+g.dataset.id, true));
+    g.addEventListener("mouseleave", () => highlight(0, false));
+    g.addEventListener("click", (ev) => { ev.stopPropagation(); showPanel(+g.dataset.id); });
+  });
+}
+function highlight(pid, on) {
+  const adj = {};
+  DATA.edges.forEach(e => {
+    (adj[e.src] = adj[e.src] || []).push(e);
+    (adj[e.dst] = adj[e.dst] || []).push(e);
+  });
+  const connected = new Set(on ? [pid] : []);
+  if (on) (adj[pid] || []).forEach(e => { connected.add(e.src); connected.add(e.dst); });
+  $("view").querySelectorAll(".nd").forEach(g => {
+    g.style.opacity = !on || connected.has(+g.dataset.id) ? 1 : 0.22;
+  });
+  $("view").querySelectorAll(".ed").forEach(p => {
+    const e = DATA.edges[+p.dataset.i];
+    p.style.opacity = !on || (e.src === pid || e.dst === pid) ? "" : 0.06;
+  });
+}
+
+async function showPanel(pid) {
+  const panel = $("panel"), body = $("panelBody");
+  panel.classList.add("open");
+  body.innerHTML = "<i style='color:#7b8a99'>加载中…</i>";
+  try {
+    const p = await api("/api/paper/" + pid);
+    const year = p.year || "?";
+    let html =
+      `<button id="panelClose" onclick="document.getElementById('panel').classList.remove('open')">✕</button>` +
+      `<h2>${esc(p.title)}</h2>` +
+      `<div class="meta">${esc(p.authors || "佚名")} · ${year}` +
+      (p.doi ? ` · <a style="color:#4f9cf9" href="https://doi.org/${esc(p.doi)}" target="_blank">DOI</a>` : "") +
+      `<span class="badge">${p.engine}</span>` +
+      (p.ext_counts && p.ext_counts.refs ? `<span class="badge">参考文献 ${p.ext_counts.refs}</span>` : "") +
+      (p.ext_counts && p.ext_counts.cited ? `<span class="badge">被引 ${p.ext_counts.cited}</span>` : "") +
+      `</div>` +
+      (p.summary ? `<div class="summary">${esc(p.summary)}</div>` : "") +
+      (p.abstract ? `<div class="abstract">${esc(p.abstract)}</div>` : "") +
+      `<div style="margin:10px 0"><button onclick="fetchCitations(${pid})">🔗 抓取引文</button></div>`;
+    const relSect = (label, arr, sim) => {
+      if (!arr || !arr.length) return "";
+      return `<h3>${label}</h3>` + arr.map(c =>
+        `<div class="rel" onclick="showPanel(${c.paper_id})">` +
+        `[${c.paper_id}] ${esc(c.title)}${c.year ? " (" + c.year + ")" : ""}` +
+        (sim ? ` <small>相似度 ${c.similarity}</small>` : "") + `</div>`).join("");
+    };
+    html += relSect("引用（库内）", p.related.cites);
+    html += relSect("被引（库内）", p.related.cited_by);
+    html += relSect("语义相近", p.related.semantic, true);
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = `<span style="color:#e4574f">${esc(String(e))}</span>`;
+  }
+}
+window.showPanel = showPanel;
+
+async function fetchCitations(pid) {
+  toast("正在抓取引文（Semantic Scholar）…");
+  try {
+    const r = await api("/api/fetch-citations/" + pid, { method: "POST" });
+    if (r.status === "not_found") toast("Semantic Scholar 未收录该论文", "err");
+    else { toast(`已抓取：参考文献 ${r.refs}，被引 ${r.cited}`, "ok"); await load(); showPanel(pid); }
+  } catch (e) { toast("抓取失败: " + e.message, "err"); }
+}
+window.fetchCitations = fetchCitations;
+
+// ---------- search ----------
+async function doSearch() {
+  const q = $("q").value.trim();
+  const box = $("results");
+  if (!q) { box.innerHTML = ""; return; }
+  box.innerHTML = "<div class='card'><small>检索中…</small></div>";
+  try {
+    const { hits } = await api("/api/search?q=" + encodeURIComponent(q));
+    if (!hits.length) { box.innerHTML = "<div class='card'><small>没有找到相关论文</small></div>"; return; }
+    box.innerHTML = hits.map(h =>
+      `<div class="card" onclick="focusNode(${h.paper_id})">` +
+      `<b>[${h.paper_id}] ${esc(h.title)}</b>` +
+      `<small>${h.year || "?"} · ${h.section}${h.pages ? " · p" + h.pages : ""} · ${h.matched_chunks} 处相关</small>` +
+      (h.summary ? `<div class="snip">${esc(h.summary.slice(0, 120))}…</div>` : "") +
+      `</div>`).join("");
+  } catch (e) { box.innerHTML = `<div class="card" style="color:#e4574f">${esc(String(e))}</div>`; }
+}
+$("btnSearch").onclick = doSearch;
+$("q").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
+
+function focusNode(pid) {
+  const p = LAYOUT[pid];
+  if (!p) { toast("该论文不在时间轴上"); return; }
+  VB.x = p.x - VB.w / 2; VB.y = p.y - VB.h / 2;
+  applyVB();
+  showPanel(pid);
+}
+window.focusNode = focusNode;
+
+// ---------- import ----------
+$("btnImport").onclick = () => $("file").click();
+$("file").addEventListener("change", async () => {
+  const files = [...$("file").files];
+  const engine = $("engine").value;
+  if (!files.length) return;
+  $("btnImport").disabled = true;
+  for (const f of files) {
+    toast(`导入 ${f.name}（${engine}）…`);
+    try {
+      const fd = new FormData();
+      fd.append("file", f); fd.append("engine", engine);
+      const r = await api("/api/ingest", { method: "POST", body: fd });
+      if (r.status === "duplicate") toast(`已存在: ${r.title}`, "ok");
+      else if (r.status === "ok") {
+        const cost = r.cost_usd != null ? `，$${r.cost_usd.toFixed(4)}` : "";
+        toast(`导入成功 [${r.paper_id}] ${r.title.slice(0, 40)}（${r.chunks} 块${cost}）`, "ok");
+      } else toast(JSON.stringify(r), "err");
+    } catch (e) { toast(`导入失败: ${e.message}`, "err"); }
+  }
+  $("file").value = "";
+  $("btnImport").disabled = false;
+  await load();
+});
+
+$("btnReload").onclick = () => load();
+
+// ---------- pan & zoom ----------
+(function () {
+  const svg = $("svg");
+  let drag = null;
+  svg.addEventListener("mousedown", e => {
+    drag = { x: e.clientX, y: e.clientY, vx: VB.x, vy: VB.y };
+    svg.classList.add("panning");
+  });
+  window.addEventListener("mousemove", e => {
+    if (!drag) return;
+    const k = VB.w / svg.clientWidth;
+    VB.x = drag.vx - (e.clientX - drag.x) * k;
+    VB.y = drag.vy - (e.clientY - drag.y) * k;
+    applyVB();
+  });
+  window.addEventListener("mouseup", () => { drag = null; svg.classList.remove("panning"); });
+  svg.addEventListener("wheel", e => {
+    e.preventDefault();
+    const f = e.deltaY > 0 ? 1.15 : 1 / 1.15;
+    const rect = svg.getBoundingClientRect();
+    const mx = VB.x + (e.clientX - rect.left) / rect.width * VB.w;
+    const my = VB.y + (e.clientY - rect.top) / rect.height * VB.h;
+    VB.w = Math.min(Math.max(VB.w * f, 300), 12000);
+    VB.h = VB.w * VB.H / VB.W;
+    VB.x = mx - (mx - VB.x) * f;
+    VB.y = my - (my - VB.y) * f;
+    applyVB();
+  }, { passive: false });
+  svg.addEventListener("dblclick", () => { VB.x = 0; VB.y = 0; VB.w = VB.W; VB.h = VB.H; applyVB(); });
+})();
+
+// ---------- boot ----------
+async function load() {
+  spin(true);
+  try {
+    DATA = await api("/api/graph");
+    render();
+  } catch (e) { toast("加载失败: " + e.message, "err"); }
+  spin(false);
+}
+window.addEventListener("resize", () => render());
+load();
+</script>
+</body>
+</html>

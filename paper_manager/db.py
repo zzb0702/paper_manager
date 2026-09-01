@@ -58,8 +58,22 @@ CREATE TABLE IF NOT EXISTS paper_vectors(
   dim INTEGER NOT NULL
 );
 
+-- citation graph fetched from Semantic Scholar (P1)
+-- direction 'refs': this paper cites the row; 'cited': the row cites this paper
+CREATE TABLE IF NOT EXISTS citations(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+  direction TEXT NOT NULL,
+  ext_id TEXT DEFAULT '',
+  title TEXT DEFAULT '',
+  year INTEGER,
+  UNIQUE(paper_id, direction, ext_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_chunks_paper ON chunks(paper_id);
 """
+
+_CITED_AT_COLUMN = "citations_fetched_at"
 
 
 def connect() -> sqlite3.Connection:
@@ -69,7 +83,18 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Lightweight column migrations for databases created before P1."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(papers)")}
+    if _CITED_AT_COLUMN not in cols:
+        conn.execute(
+            f"ALTER TABLE papers ADD COLUMN {_CITED_AT_COLUMN} TEXT"
+        )
+        conn.commit()
 
 
 def vec_to_blob(vector: list[float]) -> bytes:
@@ -232,6 +257,139 @@ def search_papers_fts(
     return [r["id"] for r in rows]
 
 
+# ------------------------------------------------------- citation graph
+
+def _norm_title(title: str) -> str:
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", (title or "").lower())
+
+
+def _title_match(a: str, b: str) -> bool:
+    """Normalized containment both ways; guards against truncated titles
+    from PDF line wraps."""
+    na, nb = _norm_title(a), _norm_title(b)
+    if not na or not nb:
+        return False
+    shorter = min(na, nb)
+    if len(shorter) < 12:
+        return False
+    return shorter in na and shorter in nb
+
+
+def upsert_citations(
+    conn: sqlite3.Connection,
+    paper_id: int,
+    refs: list[dict[str, Any]],
+    cited: list[dict[str, Any]],
+) -> int:
+    conn.execute("DELETE FROM citations WHERE paper_id = ?", (paper_id,))
+    n = 0
+    for direction, rows in (("refs", refs), ("cited", cited)):
+        for r in rows:
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO citations "
+                    "(paper_id, direction, ext_id, title, year) VALUES (?, ?, ?, ?, ?)",
+                    (paper_id, direction, str(r.get("ext_id") or ""),
+                     r.get("title") or "", r.get("year")),
+                )
+                n += 1
+            except sqlite3.IntegrityError:
+                pass
+    conn.execute(
+        "UPDATE papers SET citations_fetched_at = datetime('now') WHERE id = ?",
+        (paper_id,),
+    )
+    conn.commit()
+    return n
+
+
+def papers_without_citations(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT id, title, doi FROM papers WHERE citations_fetched_at IS NULL "
+        "ORDER BY id"
+    ).fetchall()
+
+
+def library_neighbors(conn: sqlite3.Connection, paper_id: int) -> dict[str, list]:
+    """Citation neighbors of a paper that are themselves in the library."""
+    paper_norms = {
+        r["id"]: (_norm_title(r["title"]), (r["doi"] or "").lower().strip())
+        for r in conn.execute("SELECT id, title, doi FROM papers")
+    }
+    out: dict[str, list[dict[str, Any]]] = {"cites": [], "cited_by": []}
+    rows = conn.execute(
+        "SELECT direction, ext_id, title, year FROM citations WHERE paper_id = ?",
+        (paper_id,),
+    ).fetchall()
+    my_doi = (conn.execute(
+        "SELECT doi FROM papers WHERE id = ?", (paper_id,)
+    ).fetchone() or {"doi": ""})["doi"]
+
+    for r in rows:
+        target = None
+        ref_doi = (r["ext_id"] or "").lower()
+        if ref_doi.startswith("doi:"):
+            ref_doi = ref_doi[4:]
+        for pid, (norm, doi) in paper_norms.items():
+            if pid == paper_id:
+                continue
+            if ref_doi and doi and ref_doi == doi:
+                target = pid
+                break
+            if r["title"] and _title_match(r["title"], norm):
+                target = pid
+                break
+        if target is not None:
+            out["cites" if r["direction"] == "refs" else "cited_by"].append(
+                {"paper_id": target, "ext_title": r["title"], "year": r["year"]}
+            )
+    return out
+
+
+def internal_citation_edges(conn: sqlite3.Connection) -> list[dict[str, int]]:
+    """Edges between library papers, derived from BOTH stored directions:
+    - src's refs contain dst        → src cites dst
+    - src's cited_by contains dst   → dst cites src (edge dst→src)
+    """
+    paper_norms = {
+        r["id"]: (_norm_title(r["title"]), (r["doi"] or "").lower().strip())
+        for r in conn.execute("SELECT id, title, doi FROM papers")
+    }
+    by_doi = {doi: pid for pid, (_n, doi) in paper_norms.items() if doi}
+    by_title = {norm: pid for pid, (norm, _d) in paper_norms.items() if norm}
+
+    def match(ext: str, title: str) -> int | None:
+        ext = (ext or "").lower()
+        if ext.startswith("doi:"):
+            ext = ext[4:]
+        if ext and ext in by_doi:
+            return by_doi[ext]
+        if not title:
+            return None
+        exact = by_title.get(_norm_title(title))
+        if exact:
+            return exact
+        for norm_candidate, pid in by_title.items():
+            if _title_match(title, norm_candidate):
+                return pid
+        return None
+
+    edges: dict[tuple[int, int], bool] = {}
+    for r in conn.execute(
+        "SELECT paper_id, direction, ext_id, title FROM citations"
+    ).fetchall():
+        other = match(r["ext_id"], r["title"])
+        if not other:
+            continue
+        if r["direction"] == "refs":
+            src, dst = r["paper_id"], other
+        else:
+            src, dst = other, r["paper_id"]
+        if src != dst and (src, dst) not in edges:
+            edges[(src, dst)] = True
+    return [{"src": s, "dst": d} for (s, d) in edges]
+
+
 # ---------------------------------------------------------------- search
 
 _FTS_MIN = 3  # trigram tokenizer needs >= 3 chars
@@ -358,16 +516,29 @@ def sha256_of(path: str | Path) -> str:
 
 _DOI_RE = re.compile(r"10\.\d{4,9}/[^\s\"'<>\]\)]+")
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+_ARXIV_RE = re.compile(r"arXiv[:\s]*(\d{4}\.\d{4,5})(?:v\d+)?", re.I)
 
 
 def extract_doi(text: str) -> str:
     m = _DOI_RE.search(text[:4000])
-    return (m.group(0).rstrip(".,;)") if m else "").strip()
+    if m:
+        return m.group(0).rstrip(".,;)").strip()
+    # arXiv preprints carry an automatic DOI (10.48550/arXiv.<id>) —
+    # synthesizing it makes OpenAlex resolution work for them
+    m = _ARXIV_RE.search(text[:4000])
+    if m:
+        return f"10.48550/arXiv.{m.group(1)}"
+    return ""
 
 
 def extract_year(text: str, meta: dict | None) -> int | None:
+    """PDF meta date → arXiv id (reliable for preprints) → first year in
+    the front text (weakest: may hit a cited year)."""
     m = _YEAR_RE.search((meta or {}).get("date") or "")
     if m:
         return int(m.group(0))
+    m = _ARXIV_RE.search(text[:4000])
+    if m:
+        return 2000 + int(m.group(1)[:2])
     m = _YEAR_RE.search(text[:2000])
     return int(m.group(0)) if m else None

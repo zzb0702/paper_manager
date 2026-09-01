@@ -451,6 +451,68 @@ def _stage2(
     return results
 
 
+def related_papers(
+    conn: sqlite3.Connection,
+    paper_id: int,
+    top_k: int = 5,
+    embedder: EmbeddingClient | None = None,
+) -> dict[str, Any]:
+    """Neighbors of a paper: citation graph (library-internal) + semantic
+    neighbors via paper vectors. Powers the MCP related_papers tool and
+    the UI detail panel."""
+    neighbors = db.library_neighbors(conn, paper_id)
+    row = db.get_paper(conn, paper_id)
+
+    def _cards(pids: list[int]) -> list[dict[str, Any]]:
+        cards = []
+        for pid in pids:
+            p = db.get_paper(conn, pid)
+            if p:
+                cards.append(
+                    {"paper_id": pid, "title": p["title"], "year": p["year"]}
+                )
+        return cards
+
+    semantic: list[dict[str, Any]] = []
+    if embedder is not None:
+        try:
+            _backfill_paper_index(conn, embedder)
+            ids, matrix = _PAPER_INDEX.get(conn)
+            if len(ids):
+                idx = np.where(ids == paper_id)[0]
+                if len(idx):
+                    qvec = matrix[idx[0]]
+                else:
+                    qvec = np.array(
+                        embedder.embed([db.paper_index_text(row)[:2000] or " "])[0],
+                        dtype=np.float32,
+                    )
+                scores = _cosine(matrix, qvec)
+                order = [
+                    i for i in np.argsort(-scores)
+                    if int(ids[i]) != paper_id
+                ][:top_k]
+                semantic = [
+                    {
+                        "paper_id": int(ids[i]),
+                        "title": db.get_paper(conn, int(ids[i]))["title"],
+                        "year": db.get_paper(conn, int(ids[i]))["year"],
+                        "similarity": round(float(scores[i]), 3),
+                    }
+                    for i in order
+                ]
+        except Exception:
+            pass
+
+    return {
+        "paper_id": paper_id,
+        "title": row["title"],
+        "cites": _cards([n["paper_id"] for n in neighbors["cites"]]),
+        "cited_by": _cards([n["paper_id"] for n in neighbors["cited_by"]]),
+        "semantic": semantic,
+    }
+
+
 def format_hits(hits: list[dict[str, Any]]) -> str:
     """Compact markdown rendering for agents / CLI."""
     if not hits:
