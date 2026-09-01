@@ -106,16 +106,17 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="本地论文管理器")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("ingest", help="导入单个 PDF")
+    p = sub.add_parser("ingest", help="导入单个 PDF（默认 datalab，按页计费）")
     p.add_argument("pdf")
-    p.add_argument("--engine", default="local", choices=["local", "datalab"])
+    p.add_argument("--engine", default="datalab", choices=["datalab", "local"],
+                   help="datalab=高保真按页计费（默认）；local=免费纯文本抽取")
     p.add_argument("--force", action="store_true", help="重复也重新导入")
     p.add_argument("--no-summary", action="store_true", help="跳过 LLM 摘要")
     p.set_defaults(func=cmd_ingest)
 
     p = sub.add_parser("ingest-dir", help="批量导入目录下所有 PDF")
     p.add_argument("dir")
-    p.add_argument("--engine", default="local", choices=["local", "datalab"])
+    p.add_argument("--engine", default="datalab", choices=["datalab", "local"])
     p.set_defaults(func=cmd_ingest_dir)
 
     p = sub.add_parser("search", help="混合检索")

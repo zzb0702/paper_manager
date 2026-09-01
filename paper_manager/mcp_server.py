@@ -116,23 +116,25 @@ def list_papers() -> str:
 
 
 @mcp.tool()
-def ingest_pdf(path: str, engine: str = "local") -> str:
+def ingest_pdf(path: str, engine: str = "datalab") -> str:
     """导入一个 PDF：转 Markdown、提取元数据、生成摘要、切块、嵌入入库。
 
     Args:
         path: PDF 的绝对路径。
-        engine: "local"（免费，文本型 PDF 足够）或 "datalab"（扫描件/
-                公式/表格高保真，按页计费 DATALAB_API_KEY 额度）。
+        engine: "datalab"（默认，高保真，按页计费，多 key 自动轮询）或
+                "local"（免费，纯文本抽取，适合简单文本型 PDF）。
     """
     report = ingest_pdf(path, engine=engine, embedder=EmbeddingClient.from_env())
     if report["status"] == "duplicate":
         return f"已存在（paper_id={report['paper_id']}）: {report['title']}"
     if report["status"] != "ok":
         return str(report)
+    cost = report.get("cost_usd")
+    cost_line = f"费用: ${cost:.4f}｜" if cost is not None else ""
     return (
         f"导入成功 paper_id={report['paper_id']}: {report['title']}\n"
         f"年份: {report.get('year')}｜DOI: {report.get('doi') or '未识别'}\n"
-        f"切块: {report['chunks']}（向量化 {report['embedded']}）｜引擎: {report['engine']}"
+        f"{cost_line}切块: {report['chunks']}（向量化 {report['embedded']}）｜引擎: {report['engine']}"
     )
 
 

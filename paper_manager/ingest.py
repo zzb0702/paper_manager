@@ -46,7 +46,7 @@ def _embed_all(
 def ingest_pdf(
     pdf_path: str | Path,
     *,
-    engine: str = "local",
+    engine: str = "datalab",
     force: bool = False,
     embedder: EmbeddingClient | None = None,
     make_summary: bool = True,
@@ -70,10 +70,15 @@ def ingest_pdf(
         }
 
     print(f"[1/5] 转换 PDF（引擎: {engine}）: {pdf_path.name}")
-    if engine == "datalab":
-        conv = convert_datalab(pdf_path)
-    else:
+    if engine == "local":
         conv = convert_local(pdf_path)
+    else:
+        conv = convert_datalab(pdf_path)
+        if conv.get("cost_usd") is not None:
+            print(
+                f"  [计费] {conv.get('page_count')} 页，"
+                f"${conv['cost_usd']:.4f}（key#{conv.get('key_index')}，{conv.get('keys_available')}）"
+            )
     markdown = conv["markdown"]
     meta = conv["meta"] or {}
     front = conv["front_text"]
@@ -127,6 +132,7 @@ def ingest_pdf(
         "embedded": sum(1 for v in vectors if v),
         "summary_chars": len(summary),
         "engine": engine,
+        "cost_usd": conv.get("cost_usd"),
     }
 
 

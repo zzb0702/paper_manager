@@ -17,9 +17,9 @@ cd /path/to/paper_manager
 pip install -r requirements.txt
 Copy-Item .env.example .env   # 填好 LLM / SILICONFLOW key（或直接复制 other-local-project 的 .env）
 
-# 导入
-python cli.py ingest D:\papers\some-paper.pdf            # 免费本地引擎（文本型 PDF）
-python cli.py ingest D:\papers\scan.pdf --engine datalab # 扫描件/公式/表格（按页计费）
+# 导入（默认 datalab 引擎：高保真 Marker 转换，按页计费，多 key 自动轮询）
+python cli.py ingest D:\papers\some-paper.pdf
+python cli.py ingest D:\papers\notes.pdf --engine local  # 免费纯文本抽取（可选）
 
 # 检索
 python cli.py search "attention 机制的效率优化"
@@ -31,14 +31,29 @@ python cli.py status
 
 ```
 PDF ──convert──> Markdown(data/markdown/<sha>.md)
+        datalab(默认): Marker 云端，高保真，按页计费，多 key 轮询
         local: PyMuPDF 文本抽取，插入 <!-- page:N --> 页码标记（免费）
-        datalab: Marker 云端（高保真，计费）
       ──> 元数据（标题/作者/年份/DOI 正则 + PDF meta）
       ──> LLM 摘要卡 3-5 句（papers.summary，可 --no-summary）
       ──> 章节感知切块（300-800 tokens，带 section/page 元数据）
       ──> bge-m3 嵌入（批量 16，失败自动降级为纯 FTS5）
       ──> SQLite（data/papers.db: papers/chunks/FTS5/chunk_vectors）
 ```
+
+### Datalab 多 key 轮询
+
+`.env` 里用逗号分隔多个 key：
+
+```dotenv
+DATALAB_API_KEYS=key1,key2,key3
+```
+
+- 每次转换从第一个可用 key 开始；某个 key 返回 HTTP 402 或
+  payment/credit/额度 类错误时，自动标记耗尽并切下一个，无需人工干预；
+- 耗尽记录存在 `data/datalab_keys.json`（只存 key 的 sha256 前缀，不存明文），
+  **6 小时后自动重试**（中途充值即可恢复）；
+- CLI/MCP 的入库报告会显示本次用的 key 序号、剩余可用数和精确费用
+  （`$0.0143/页` 级别，来自 Datalab 的 cost_breakdown）。
 
 检索：`FTS5(trigram, 中文安全) ⊕ 向量余弦 → RRF(k=60) → bge-reranker → 去重出卡`。
 
