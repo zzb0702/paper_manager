@@ -1,0 +1,42 @@
+{
+  "comment": "Retrieval evaluation cases. expect_any: at least one of these title substrings must appear in top-k. expect_all: all must appear. filters are passed to search as metadata constraints. Keep labels tied to evals/build_library.py contents.",
+  "cases": [
+    { "id": "zh01", "query": "怎么让注意力机制在长文本上更快", "expect_any": ["Efficient Attention"], "note": "中文自然语言 → 线性注意力" },
+    { "id": "zh02", "query": "扩散模型是怎么生成图像的", "expect_any": ["Diffusion Models for Image Synthesis"] },
+    { "id": "zh03", "query": "CRISPR 编辑作物抗病的研究进展", "expect_any": ["Disease-Resistant Staple Crops"] },
+    { "id": "zh04", "query": "怎么减少基因编辑的脱靶效应", "expect_any": ["Off-Target Mutations"], "note": "与 zh03 区分：脱靶 vs 农业" },
+    { "id": "zh05", "query": "语言模型怎么和人类偏好对齐", "expect_any": ["Reinforcement Learning from Human Feedback"] },
+    { "id": "zh06", "query": "医院之间怎么合作训练模型又不泄露病人数据", "expect_any": ["Federated Learning"] },
+    { "id": "zh07", "query": "分子性质预测用什么图模型", "expect_any": ["Graph Neural Networks for Molecular"] },
+    { "id": "zh08", "query": "模型压缩后部署到手机上有什么方法", "expect_any": ["Knowledge Distillation"] },
+    { "id": "zh09", "query": "蛋白质工程的实验怎么自动设计", "expect_any": ["Bayesian Optimization"] },
+    { "id": "zh10", "query": "WMT 2014 翻译任务上 28.4 BLEU 记录是哪篇论文创下的", "expect_any": ["Attention Is All You Need"], "note": "与 Efficient Attention 区分" },
+    { "id": "zh11", "query": "AI 药物发现里的分子表示学习", "expect_any": ["Graph Neural Networks for Molecular"] },
+    { "id": "zh12", "query": "医疗影像多中心研究的数据隐私", "expect_any": ["Federated Learning"] },
+    { "id": "zh13", "query": "植物育种的基因编辑技术", "expect_any": ["Disease-Resistant Staple Crops"] },
+    { "id": "zh14", "query": "蒸馏和量化怎么叠加用", "expect_any": ["Knowledge Distillation"] },
+
+    { "id": "en01", "query": "classifier-free guidance quality latency tradeoff", "expect_any": ["Diffusion Models for Image Synthesis"] },
+    { "id": "en02", "query": "guide RNA design to reduce off-target cleavage", "expect_any": ["Off-Target Mutations"] },
+    { "id": "en03", "query": "message passing neural network solubility prediction", "expect_any": ["Graph Neural Networks for Molecular"] },
+    { "id": "en04", "query": "PPO reward model KL penalty alignment", "expect_any": ["Reinforcement Learning from Human Feedback"] },
+    { "id": "en05", "query": "federated averaging differential privacy gaussian mechanism hospitals", "expect_any": ["Federated Learning"] },
+    { "id": "en06", "query": "student teacher distillation hidden state alignment", "expect_any": ["Knowledge Distillation"] },
+    { "id": "en07", "query": "gaussian process matern kernel acquisition function enzyme", "expect_any": ["Bayesian Optimization"] },
+    { "id": "en08", "query": "linear complexity attention random feature kernel", "expect_any": ["Efficient Attention"] },
+    { "id": "en09", "query": "HypaCas9 high fidelity specificity benchmark", "expect_any": ["Off-Target Mutations"] },
+    { "id": "en10", "query": "scaled dot-product multi-head attention positional encoding", "expect_any": ["Attention Is All You Need"] },
+
+    { "id": "mix01", "query": "attention 长序列 推理加速", "expect_any": ["Efficient Attention"], "note": "中英混合关键词" },
+    { "id": "mix02", "query": "基因编辑 off-target 检测", "expect_any": ["Off-Target Mutations"] },
+    { "id": "mix03", "query": "扩散模型 DDIM sampler 步数", "expect_any": ["Diffusion Models for Image Synthesis"] },
+
+    { "id": "all01", "query": "CRISPR-Cas9 应用与安全性综述", "expect_all": ["Disease-Resistant Staple Crops", "Off-Target Mutations"], "note": "两篇 CRISPR 都应进 top-k" },
+    { "id": "all02", "query": "attention 进化历程 从 transformer 到 linear attention", "expect_all": ["Attention Is All You Need", "Efficient Attention"] },
+
+    { "id": "flt01", "query": "genome editing crops", "filters": { "year_min": 2023 }, "expect_any": ["Disease-Resistant Staple Crops"], "note": "2023 年的只有农业那篇" },
+    { "id": "flt02", "query": "attention mechanism", "filters": { "year_min": 2018 }, "expect_any": ["Efficient Attention"], "note": "排除 2017 原始论文" },
+    { "id": "flt03", "query": "off-target", "filters": { "author": "Wang" }, "expect_any": ["Off-Target Mutations"] },
+    { "id": "flt04", "query": "BLEU translation", "filters": { "author": "Vaswani" }, "expect_any": ["Attention Is All You Need"] }
+  ]
+}

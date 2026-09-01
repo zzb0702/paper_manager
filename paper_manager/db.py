@@ -247,7 +247,10 @@ def search_fts(
 ) -> list[int]:
     """Chunk ids ranked by FTS5; falls back to LIKE for short queries.
 
-    paper_ids restricts matching to chunks of those papers (stage 2).
+    Multi-word queries are split into quoted terms joined with OR — a
+    trigram phrase match on the whole query would require the exact
+    contiguous substring in the text. paper_ids restricts matching to
+    chunks of those papers (stage 2).
     """
     q = query.strip()
     restrict = ""
@@ -260,12 +263,14 @@ def search_fts(
             f" AND rowid IN (SELECT id FROM chunks WHERE paper_id IN ({marks}))"
         )
         params = list(paper_ids)
-    if len(q) >= _FTS_MIN:
+    terms = [t for t in re.split(r"[\s,，;；、|]+", q) if len(t) >= _FTS_MIN]
+    if terms:
+        match_q = " OR ".join(_fts_quote(t) for t in terms)
         try:
             rows = conn.execute(
                 "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ?"
                 f"{restrict} ORDER BY rank LIMIT ?",
-                [_fts_quote(q), *params, k],
+                [match_q, *params, k],
             ).fetchall()
             if rows:
                 return [r["rowid"] for r in rows]

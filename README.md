@@ -102,6 +102,23 @@ HTTP 方式：`python -m paper_manager.mcp_server --http`（127.0.0.1:8820/mcp�
 两边可共用同一份 key 配置。全部服务可缺省：无 Embedding → 纯 FTS5；
 无 LLM → 跳过摘要卡；无 DATALAB → 只用本地引擎。
 
+## 检索评测（防回退）
+
+`evals/` 内置 33 条标注用例（中文自然语言、英文关键词、中英混合、
+易混淆论文对、元数据过滤），跑在 **10 篇确定性合成论文**上——
+评测库位于 `evals/library/`，与你的真实 `data/` 完全隔离。
+
+```powershell
+python evals/build_library.py   # 一次性构建评测库（免费 local 引擎，无 LLM 摘要）
+python evals/run_eval.py        # recall@5 / MRR / 延迟；低于阈值退出码 1
+python evals/run_eval.py --k 3 --min-recall 0.9 --json
+python evals/run_eval.py --rewrite   # 加上 LLM 查询改写（非确定性，默认关）
+```
+
+当前基线：**recall@5 = 100%，MRR = 1.000，中位延迟 ~0.7s**。
+改任何检索参数（RRF k、chunk 大小、切块策略）后重跑一遍，防止调坏。
+基线会随用例库更新而变化，重大改动后在 README 记录新基线。
+
 ## Roadmap
 
 - **P1 引文图**：从 DOI 调 Semantic Scholar / OpenAlex 免费 API 拉
