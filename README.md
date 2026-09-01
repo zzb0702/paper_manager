@@ -56,6 +56,11 @@ DATALAB_API_KEYS=key1,key2,key3
   （`$0.0143/页` 级别，来自 Datalab 的 cost_breakdown）。
 
 检索：`FTS5(trigram, 中文安全) ⊕ 向量余弦 → RRF(k=60) → bge-reranker → 去重出卡`。
+支持元数据过滤（`--year-min/--year-max/--author/--venue`，MCP 工具同名参数），
+过滤在候选生成阶段生效，不是事后筛除。
+全部 chunk 向量在 MCP 服务器进程内常驻（numpy 矩阵 + 版本戳）：
+首次检索加载一次，之后复用；任何进程（含 CLI）入库导致表变化时，
+下次检索自动重载——查询不再每次全量读 SQLite。
 
 ## MCP 接入（给 agent 用）
 
@@ -73,7 +78,7 @@ stdio 方式（other-local-project 的 mcp_bridge 直接支持），在 `.mcp.js
 
 | 工具 | 作用 |
 |------|------|
-| `search_papers(query, top_k)` | 摘要级命中卡：标题+摘要+最佳片段+章节页码出处 |
+| `search_papers(query, top_k, year_min?, year_max?, author?, venue?)` | 摘要级命中卡：标题+摘要+最佳片段+章节页码出处，可叠加元数据过滤 |
 | `read_paper_section(paper_id, section)` | 深入读某章节，默认 6000 字符截断 |
 | `list_papers()` | 库清单 |
 | `ingest_pdf(path, engine)` | 导入新 PDF |

@@ -165,11 +165,17 @@ def search_fts(conn: sqlite3.Connection, query: str, k: int = 30) -> list[int]:
     return [r["id"] for r in rows]
 
 
-def load_vectors(conn: sqlite3.Connection) -> dict[int, list[float]]:
-    return {
-        r["chunk_id"]: blob_to_vec(r["embedding"])
-        for r in conn.execute("SELECT chunk_id, embedding FROM chunk_vectors")
-    }
+def chunk_paper_map(
+    conn: sqlite3.Connection, ids: list[int]
+) -> dict[int, int]:
+    """chunk_id -> paper_id for the given chunk ids."""
+    if not ids:
+        return {}
+    marks = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"SELECT id, paper_id FROM chunks WHERE id IN ({marks})", ids
+    ).fetchall()
+    return {r["id"]: r["paper_id"] for r in rows}
 
 
 def chunks_by_ids(conn: sqlite3.Connection, ids: list[int]) -> list[sqlite3.Row]:

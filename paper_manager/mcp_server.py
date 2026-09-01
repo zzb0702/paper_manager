@@ -39,8 +39,15 @@ def _clients() -> tuple[EmbeddingClient | None, RerankerClient | None]:
 
 
 @mcp.tool()
-def search_papers(query: str, top_k: int = 5) -> str:
-    """按语义/关键词搜索本地论文库。
+def search_papers(
+    query: str,
+    top_k: int = 5,
+    year_min: int | None = None,
+    year_max: int | None = None,
+    author: str = "",
+    venue: str = "",
+) -> str:
+    """按语义/关键词搜索本地论文库，可叠加元数据过滤。
 
     返回摘要级命中卡片（标题、年份、3-5 句摘要、最匹配片段及章节页码）。
     默认每篇论文只出一条最佳命中。想读全文某章节时用 read_paper_section。
@@ -48,12 +55,24 @@ def search_papers(query: str, top_k: int = 5) -> str:
     Args:
         query: 检索问题或关键词（中英文均可）。
         top_k: 返回论文数，默认 5。
+        year_min: 发表年份下限（含），可选。
+        year_max: 发表年份上限（含），可选。
+        author: 作者名过滤（部分匹配），可选，如 "Vaswani"。
+        venue: 期刊/会议过滤（部分匹配），可选，如 "NeurIPS"。
     """
     conn = db.connect()
     try:
         emb, rr = _clients()
         hits = retriever.search(
-            conn, query, top_k=top_k, embedder=emb, reranker=rr
+            conn,
+            query,
+            top_k=top_k,
+            embedder=emb,
+            reranker=rr,
+            year_min=year_min,
+            year_max=year_max,
+            author=author or None,
+            venue=venue or None,
         )
         return retriever.format_hits(hits)
     finally:

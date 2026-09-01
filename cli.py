@@ -48,6 +48,10 @@ def cmd_search(args: argparse.Namespace) -> None:
             top_k=args.top_k,
             embedder=EmbeddingClient.from_env(),
             reranker=RerankerClient.from_env(),
+            year_min=args.year_min,
+            year_max=args.year_max,
+            author=args.author,
+            venue=args.venue,
         )
         print(retriever.format_hits(hits))
     finally:
@@ -119,9 +123,13 @@ def main() -> None:
     p.add_argument("--engine", default="datalab", choices=["datalab", "local"])
     p.set_defaults(func=cmd_ingest_dir)
 
-    p = sub.add_parser("search", help="混合检索")
+    p = sub.add_parser("search", help="混合检索（可按年份/作者/期刊过滤）")
     p.add_argument("query")
     p.add_argument("-k", "--top-k", type=int, default=5)
+    p.add_argument("--year-min", type=int, default=None, help="年份下限（含）")
+    p.add_argument("--year-max", type=int, default=None, help="年份上限（含）")
+    p.add_argument("--author", default=None, help="作者过滤（部分匹配）")
+    p.add_argument("--venue", default=None, help="期刊/会议过滤（部分匹配）")
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("read", help="读论文章节")
