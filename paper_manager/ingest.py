@@ -13,6 +13,7 @@ from .config import MD_DIR, ensure_dirs
 from .convert import convert_datalab, convert_local, guess_title
 from .embedder import EmbeddingClient
 from .llm import summarize_paper
+from .util import log
 
 EMBED_BATCH = 16
 
@@ -38,7 +39,7 @@ def _embed_all(
         try:
             vectors.extend(embedder.embed(batch))
         except Exception as exc:
-            print(f"  [向量跳过] 批次 {i}: {type(exc).__name__}: {exc}")
+            log(f"  [向量跳过] 批次 {i}: {type(exc).__name__}: {exc}")
             vectors.extend([None] * len(batch))
     return vectors
 
@@ -69,13 +70,13 @@ def ingest_pdf(
             "title": existing["title"],
         }
 
-    print(f"[1/5] 转换 PDF（引擎: {engine}）: {pdf_path.name}")
+    log(f"[1/5] 转换 PDF（引擎: {engine}）: {pdf_path.name}")
     if engine == "local":
         conv = convert_local(pdf_path)
     else:
         conv = convert_datalab(pdf_path)
         if conv.get("cost_usd") is not None:
-            print(
+            log(
                 f"  [计费] {conv.get('page_count')} 页，"
                 f"${conv['cost_usd']:.4f}（key#{conv.get('key_index')}，{conv.get('keys_available')}）"
             )
@@ -83,7 +84,7 @@ def ingest_pdf(
     meta = conv["meta"] or {}
     front = conv["front_text"]
 
-    print(f"[2/5] 提取元数据（{conv['page_count']} 页）")
+    log(f"[2/5] 提取元数据（{conv['page_count']} 页）")
     title = guess_title(markdown, meta)
     authors = (meta.get("author") or "")[:300]
     year = db.extract_year(front, meta)
@@ -93,16 +94,19 @@ def ingest_pdf(
     md_file = MD_DIR / f"{sha[:16]}.md"
     md_file.write_text(markdown, encoding="utf-8")
 
-    print(f"[3/5] 生成结构化摘要: {title[:60]}")
+    log(f"[3/5] 生成结构化摘要: {title[:60]}")
     summary = ""
     if make_summary:
         summary = summarize_paper(abstract and (title + "\n" + abstract) or front) or ""
 
     chunks = chunk_markdown(markdown)
-    print(f"[4/5] 切块完成: {len(chunks)} 块，开始嵌入")
+    log(f"[4/5] 切块完成: {len(chunks)} 块，开始嵌入")
     vectors = _embed_all([c["text"] for c in chunks], embedder)
 
     if existing and force:
+        # fts tables have no FK cascade; clean them explicitly
+        db.delete_paper_fts(conn, existing["id"])
+        db.delete_paper_index(conn, existing["id"])
         conn.execute("DELETE FROM papers WHERE id = ?", (existing["id"],))
         conn.commit()
 
@@ -120,7 +124,23 @@ def ingest_pdf(
         engine=engine,
     )
     n = db.replace_chunks(conn, paper_id, chunks, vectors)
-    print(f"[5/5] 入库完成: paper_id={paper_id}, {n} chunks")
+
+    # stage-1 index: paper FTS row + one paper-level vector
+    paper_vector = None
+    if embedder is not None:
+        try:
+            paper_text = (
+                f"{title}\n{abstract}\n{summary}".strip() or markdown[:1500]
+            )
+            paper_vector = embedder.embed([paper_text[:2000]])[0]
+        except Exception as exc:
+            log(f"  [论文向量跳过] {type(exc).__name__}: {str(exc)[:120]}")
+    index_text = " / ".join(
+        p for p in (title, authors, abstract, summary) if p
+    ) or markdown[:1500]
+    db.upsert_paper_index(conn, paper_id, index_text, paper_vector)
+
+    log(f"[5/5] 入库完成: paper_id={paper_id}, {n} chunks")
     conn.close()
     return {
         "status": "ok",
@@ -133,6 +153,7 @@ def ingest_pdf(
         "summary_chars": len(summary),
         "engine": engine,
         "cost_usd": conv.get("cost_usd"),
+        "paper_vector": paper_vector is not None,
     }
 
 
@@ -148,5 +169,5 @@ def ingest_dir(
         except Exception as exc:
             r = {"status": "error", "path": str(p), "error": f"{type(exc).__name__}: {exc}"}
         reports.append(r)
-        print(f"  -> {r.get('status')}: {p.name}")
+        log(f"  -> {r.get('status')}: {p.name}")
     return reports

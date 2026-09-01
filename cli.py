@@ -13,11 +13,28 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from paper_manager import db, retriever
 from paper_manager.embedder import EmbeddingClient, RerankerClient
 from paper_manager.ingest import ingest_dir, ingest_pdf
+
+_REWRITE_CACHE: dict[str, list[str] | None] = {}
+
+
+def _rewriter() -> retriever.QueryRewriter | None:
+    """LLM query rewriter with per-process caching; None when no LLM env."""
+    if not os.getenv("LLM_BASE_URL", "").strip():
+        return None
+    from paper_manager.llm import rewrite_query
+
+    def _rewrite(q: str) -> list[str] | None:
+        if q not in _REWRITE_CACHE:
+            _REWRITE_CACHE[q] = rewrite_query(q)
+        return _REWRITE_CACHE[q]
+
+    return _rewrite
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:
@@ -52,6 +69,7 @@ def cmd_search(args: argparse.Namespace) -> None:
             year_max=args.year_max,
             author=args.author,
             venue=args.venue,
+            query_rewriter=_rewriter(),
         )
         print(retriever.format_hits(hits))
     finally:
@@ -98,10 +116,26 @@ def cmd_status(_: argparse.Namespace) -> None:
     conn = db.connect()
     try:
         s = db.stats(conn)
+        n_vec = conn.execute("SELECT COUNT(*) c FROM paper_vectors").fetchone()["c"]
         print(
             f"论文 {s['papers']} 篇｜chunks {s['chunks']}｜"
-            f"向量化 {s['vectors']}｜库: {db.DB_PATH}"
+            f"chunk 向量 {s['vectors']}｜论文向量 {n_vec}｜库: {db.DB_PATH}"
         )
+    finally:
+        conn.close()
+
+
+def cmd_backfill(_: argparse.Namespace) -> None:
+    """Build stage-1 paper index (FTS rows + paper vectors) for legacy rows."""
+    from paper_manager.retriever import _backfill_paper_index
+
+    conn = db.connect()
+    try:
+        _backfill_paper_index(conn, EmbeddingClient.from_env())
+        n_vec = conn.execute(
+            "SELECT COUNT(*) c FROM paper_vectors"
+        ).fetchone()["c"]
+        print(f"补齐完成，论文向量共 {n_vec} 条")
     finally:
         conn.close()
 
@@ -143,6 +177,9 @@ def main() -> None:
 
     p = sub.add_parser("status", help="库统计")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("backfill", help="补齐存量论文的论文级索引（FTS+向量）")
+    p.set_defaults(func=cmd_backfill)
 
     args = ap.parse_args()
     args.func(args)

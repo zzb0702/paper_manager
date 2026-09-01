@@ -55,12 +55,23 @@ DATALAB_API_KEYS=key1,key2,key3
 - CLI/MCP 的入库报告会显示本次用的 key 序号、剩余可用数和精确费用
   （`$0.0143/页` 级别，来自 Datalab 的 cost_breakdown）。
 
-检索：`FTS5(trigram, 中文安全) ⊕ 向量余弦 → RRF(k=60) → bge-reranker → 去重出卡`。
-支持元数据过滤（`--year-min/--year-max/--author/--venue`，MCP 工具同名参数），
-过滤在候选生成阶段生效，不是事后筛除。
-全部 chunk 向量在 MCP 服务器进程内常驻（numpy 矩阵 + 版本戳）：
-首次检索加载一次，之后复用；任何进程（含 CLI）入库导致表变化时，
-下次检索自动重载——查询不再每次全量读 SQLite。
+检索为**两阶段**（PaperQA2 风格）：
+
+```
+问题 ──LLM 改写──> 2-3 组中英文检索关键词（可选，失败退回原查询）
+        ↓
+阶段一（论文级）：papers_fts ⊕ 论文向量（标题+摘要+摘要卡）→ RRF → top-20 候选论文
+        ↓
+阶段二（章节级）：候选论文内 FTS ⊕ 向量 → RRF → 论文得分聚合
+        ↓
+论文得分 = 最佳 chunk 得分 × (1 + 0.1 × 额外命中段落数, 上限5) → bge-reranker 校正
+        ↓
+命中卡：标题 + 摘要卡 + 最佳片段（含章节/页码/相关段落数）
+```
+
+- 论文级索引在导入时自动构建；存量论文在首次检索或 `python cli.py backfill` 时补齐；
+- 阶段一为空或无论文向量时自动降级为全局章节检索；所有外部服务失败均静默降级到 FTS5；
+- 库内日志全部走 stderr，MCP stdio 协议不受 print 污染。
 
 ## MCP 接入（给 agent 用）
 
@@ -78,7 +89,7 @@ stdio 方式（other-local-project 的 mcp_bridge 直接支持），在 `.mcp.js
 
 | 工具 | 作用 |
 |------|------|
-| `search_papers(query, top_k, year_min?, year_max?, author?, venue?)` | 摘要级命中卡：标题+摘要+最佳片段+章节页码出处，可叠加元数据过滤 |
+| `search_papers(query, top_k, year_min?, year_max?, author?, venue?)` | 两阶段检索（论文级召回→章节级聚合），摘要级命中卡，可叠加元数据过滤 |
 | `read_paper_section(paper_id, section)` | 深入读某章节，默认 6000 字符截断 |
 | `list_papers()` | 库清单 |
 | `ingest_pdf(path, engine)` | 导入新 PDF |

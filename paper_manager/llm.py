@@ -71,5 +71,34 @@ def summarize_paper(front_text: str) -> str | None:
         out = chat(text, max_tokens=350)
         return out or None
     except Exception as exc:
-        print(f"  [摘要跳过] {type(exc).__name__}: {str(exc)[:200]}")
+        from .util import log
+
+        log(f"  [摘要跳过] {type(exc).__name__}: {str(exc)[:200]}")
+        return None
+
+
+REWRITE_PROMPT = (
+    "你是学术论文检索助手。把用户的问题改写成 2-3 组论文检索关键词，"
+    "覆盖同义表述和英文对应说法（学术论文多为英文）。"
+    "只输出一个 JSON 字符串数组，不要任何解释。\n"
+    "示例：输出 [\"scaled dot-product attention\", \"self-attention efficiency\", \"注意力机制 并行\"]\n\n"
+    "用户问题："
+)
+
+
+def rewrite_query(question: str) -> list[str] | None:
+    """Expand a question into extra search-keyword variants (bilingual).
+
+    Returns None when the LLM is unavailable or the reply is unparseable —
+    callers then search with the original query only.
+    """
+    try:
+        out = chat(REWRITE_PROMPT + question.strip(), max_tokens=150)
+        start, end = out.find("["), out.rfind("]")
+        if start < 0 or end <= start:
+            return None
+        arr = json.loads(out[start : end + 1])
+        variants = [str(x).strip() for x in arr if str(x).strip()][:3]
+        return variants or None
+    except Exception:
         return None

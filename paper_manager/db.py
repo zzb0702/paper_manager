@@ -47,6 +47,17 @@ CREATE TABLE IF NOT EXISTS chunk_vectors(
   dim INTEGER NOT NULL
 );
 
+-- paper-level stage-1 index: one FTS row per paper (rowid == paper id),
+-- content = title / authors / abstract / summary
+CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5(content, tokenize='trigram');
+
+-- one vector per paper, embedding of title+abstract+summary
+CREATE TABLE IF NOT EXISTS paper_vectors(
+  paper_id INTEGER PRIMARY KEY REFERENCES papers(id) ON DELETE CASCADE,
+  embedding BLOB NOT NULL,
+  dim INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_chunks_paper ON chunks(paper_id);
 """
 
@@ -139,20 +150,74 @@ def replace_chunks(
     return len(chunks)
 
 
-# ---------------------------------------------------------------- search
+# ------------------------------------------------------- paper-level index
 
-_FTS_MIN = 3  # trigram tokenizer needs >= 3 chars
+def upsert_paper_index(
+    conn: sqlite3.Connection,
+    paper_id: int,
+    text: str,
+    vector: list[float] | None,
+) -> None:
+    """Refresh papers_fts (rowid == paper_id) and paper_vectors for a paper."""
+    conn.execute("DELETE FROM papers_fts WHERE rowid = ?", (paper_id,))
+    conn.execute(
+        "INSERT INTO papers_fts (rowid, content) VALUES (?, ?)",
+        (paper_id, text),
+    )
+    conn.execute("DELETE FROM paper_vectors WHERE paper_id = ?", (paper_id,))
+    if vector:
+        conn.execute(
+            "INSERT INTO paper_vectors (paper_id, embedding, dim) VALUES (?, ?, ?)",
+            (paper_id, vec_to_blob(vector), len(vector)),
+        )
+    conn.commit()
 
 
-def search_fts(conn: sqlite3.Connection, query: str, k: int = 30) -> list[int]:
-    """Chunk ids ranked by FTS5; falls back to LIKE for short queries."""
+def delete_paper_index(conn: sqlite3.Connection, paper_id: int) -> None:
+    conn.execute("DELETE FROM papers_fts WHERE rowid = ?", (paper_id,))
+    conn.execute("DELETE FROM paper_vectors WHERE paper_id = ?", (paper_id,))
+
+
+def delete_paper_fts(conn: sqlite3.Connection, paper_id: int) -> None:
+    """Remove a paper's chunk FTS rows (chunks_fts has no FK to chunks)."""
+    conn.execute(
+        "DELETE FROM chunks_fts WHERE rowid IN "
+        "(SELECT id FROM chunks WHERE paper_id = ?)",
+        (paper_id,),
+    )
+
+
+def papers_missing_fts(conn: sqlite3.Connection) -> list[int]:
+    rows = conn.execute(
+        "SELECT p.id FROM papers p "
+        "LEFT JOIN papers_fts f ON f.rowid = p.id WHERE f.rowid IS NULL"
+    ).fetchall()
+    return [r["id"] for r in rows]
+
+
+def papers_missing_vectors(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT p.id, p.title, p.abstract, p.summary FROM papers p "
+        "LEFT JOIN paper_vectors v ON v.paper_id = p.id WHERE v.paper_id IS NULL"
+    ).fetchall()
+
+
+def paper_index_text(row: sqlite3.Row) -> str:
+    parts = [row["title"], "", row["abstract"], row["summary"]]
+    return "\n".join(p or "" for p in parts).strip()
+
+
+def search_papers_fts(
+    conn: sqlite3.Connection, query: str, k: int = 30
+) -> list[int]:
+    """Paper ids ranked by papers_fts; LIKE fallback for short queries."""
     q = query.strip()
     if len(q) >= _FTS_MIN:
         try:
             rows = conn.execute(
-                "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? "
+                "SELECT rowid FROM papers_fts WHERE papers_fts MATCH ? "
                 "ORDER BY rank LIMIT ?",
-                (f'"{q.replace(chr(34), chr(34) * 2)}"', k),
+                (_fts_quote(q), k),
             ).fetchall()
             if rows:
                 return [r["rowid"] for r in rows]
@@ -160,8 +225,64 @@ def search_fts(conn: sqlite3.Connection, query: str, k: int = 30) -> list[int]:
             pass
     like = f"%{q}%"
     rows = conn.execute(
-        "SELECT id FROM chunks WHERE text LIKE ? LIMIT ?", (like, k)
+        "SELECT p.id FROM papers p LEFT JOIN papers_fts f ON f.rowid = p.id "
+        "WHERE f.content LIKE ? OR p.title LIKE ? LIMIT ?",
+        (like, like, k),
     ).fetchall()
+    return [r["id"] for r in rows]
+
+
+# ---------------------------------------------------------------- search
+
+_FTS_MIN = 3  # trigram tokenizer needs >= 3 chars
+
+
+def _fts_quote(q: str) -> str:
+    return '"' + q.replace('"', '""') + '"'
+
+
+def search_fts(
+    conn: sqlite3.Connection, query: str, k: int = 30,
+    paper_ids: list[int] | None = None,
+) -> list[int]:
+    """Chunk ids ranked by FTS5; falls back to LIKE for short queries.
+
+    paper_ids restricts matching to chunks of those papers (stage 2).
+    """
+    q = query.strip()
+    restrict = ""
+    params: list[Any] = []
+    if paper_ids is not None:
+        if not paper_ids:
+            return []
+        marks = ",".join("?" * len(paper_ids))
+        restrict = (
+            f" AND rowid IN (SELECT id FROM chunks WHERE paper_id IN ({marks}))"
+        )
+        params = list(paper_ids)
+    if len(q) >= _FTS_MIN:
+        try:
+            rows = conn.execute(
+                "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ?"
+                f"{restrict} ORDER BY rank LIMIT ?",
+                [_fts_quote(q), *params, k],
+            ).fetchall()
+            if rows:
+                return [r["rowid"] for r in rows]
+        except sqlite3.OperationalError:
+            pass
+    like = f"%{q}%"
+    if paper_ids is not None:
+        marks = ",".join("?" * len(paper_ids))
+        rows = conn.execute(
+            f"SELECT id FROM chunks WHERE text LIKE ? AND paper_id IN ({marks})"
+            " LIMIT ?",
+            [like, *paper_ids, k],
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id FROM chunks WHERE text LIKE ? LIMIT ?", (like, k)
+        ).fetchall()
     return [r["id"] for r in rows]
 
 

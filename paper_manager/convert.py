@@ -22,6 +22,8 @@ from typing import Any
 
 import requests
 
+from .util import log
+
 # Some OpenAI-compatible gateways 403 the SDK default UA; browser UA is safe.
 UA_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -168,7 +170,7 @@ def convert_datalab(
                 )
         except requests.RequestException as exc:
             last_error = exc
-            print(f"  [DATALAB key#{idx}] 网络错误，尝试下一个: {exc}")
+            log(f"  [DATALAB key#{idx}] 网络错误，尝试下一个: {exc}")
             continue
 
         if resp.status_code == 200:
@@ -193,7 +195,7 @@ def convert_datalab(
         body = resp.text[:300]
         if _is_quota_error(resp.status_code, body):
             pool.mark_exhausted(key)
-            print(
+            log(
                 f"  [DATALAB key#{idx}] 额度不足，自动切换下一个"
                 f"（{pool.status()}）: {body[:120]}"
             )

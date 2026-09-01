@@ -20,7 +20,8 @@ from mcp.server.fastmcp import FastMCP
 
 from . import db, retriever
 from .embedder import EmbeddingClient, RerankerClient
-from .ingest import ingest_pdf
+from .ingest import ingest_pdf as _ingest_pdf
+from .util import log
 
 mcp = FastMCP(
     "paper-manager",
@@ -38,6 +39,25 @@ def _clients() -> tuple[EmbeddingClient | None, RerankerClient | None]:
     return EmbeddingClient.from_env(), RerankerClient.from_env()
 
 
+_REWRITE_CACHE: dict[str, list[str] | None] = {}
+
+
+def _rewriter() -> retriever.QueryRewriter | None:
+    """LLM query rewriter (cached per process); None when no LLM env."""
+    import os
+
+    if not os.getenv("LLM_BASE_URL", "").strip():
+        return None
+    from .llm import rewrite_query
+
+    def _rewrite(q: str) -> list[str] | None:
+        if q not in _REWRITE_CACHE:
+            _REWRITE_CACHE[q] = rewrite_query(q)
+        return _REWRITE_CACHE[q]
+
+    return _rewrite
+
+
 @mcp.tool()
 def search_papers(
     query: str,
@@ -49,8 +69,10 @@ def search_papers(
 ) -> str:
     """按语义/关键词搜索本地论文库，可叠加元数据过滤。
 
-    返回摘要级命中卡片（标题、年份、3-5 句摘要、最匹配片段及章节页码）。
-    默认每篇论文只出一条最佳命中。想读全文某章节时用 read_paper_section。
+    检索为两阶段：先在论文级（摘要卡+摘要向量）召回候选论文，
+    再在候选论文的章节块内做混合检索与聚合排序；问题会先由 LLM
+    改写成 2-3 组中英文检索关键词以提升召回。返回摘要级命中卡片
+    （标题、年份、摘要、最匹配片段及章节页码、相关段落计数）。
 
     Args:
         query: 检索问题或关键词（中英文均可）。
@@ -73,6 +95,7 @@ def search_papers(
             year_max=year_max,
             author=author or None,
             venue=venue or None,
+            query_rewriter=_rewriter(),
         )
         return retriever.format_hits(hits)
     finally:
@@ -143,7 +166,7 @@ def ingest_pdf(path: str, engine: str = "datalab") -> str:
         engine: "datalab"（默认，高保真，按页计费，多 key 自动轮询）或
                 "local"（免费，纯文本抽取，适合简单文本型 PDF）。
     """
-    report = ingest_pdf(path, engine=engine, embedder=EmbeddingClient.from_env())
+    report = _ingest_pdf(path, engine=engine, embedder=EmbeddingClient.from_env())
     if report["status"] == "duplicate":
         return f"已存在（paper_id={report['paper_id']}）: {report['title']}"
     if report["status"] != "ok":
