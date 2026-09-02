@@ -160,6 +160,26 @@ python cli.py related 3              # 查看邻居：库内引用/被引 + 语�
 - arXiv 预印本没有印刷版 DOI，入库时自动合成 `10.48550/arXiv.<id>` 用于解析；
 - 引文行按 DOI 优先、归一化标题包含匹配兜底关联到库内论文（容忍 PDF 换行截断的标题）。
 
+## 概念图（P2）
+
+LightRAG 式概念层：LLM 从每个章节块抽取实体（method/dataset/task/concept）
+与关系，按归一化名称跨批次去重；每个章节块链接到它提到的实体，形成
+"概念 → 章节证据"的双层结构。
+
+```powershell
+python cli.py build-kg --all      # 为所有未构建论文抽取概念图（走 LLM）
+python cli.py kg "graph rag 双层检索"   # 概念检索
+```
+
+概念检索（`search_graph`，MCP 工具同名）与 `search_papers` 互补：
+普通语义搜索对"哪些论文用了 X 方法""X 和 Y 什么关系"这类概念性问题
+命中率低——概念检索先命中实体、沿关系扩展一跳邻居、再回溯到讨论这些
+概念的章节，按论文聚合。命中卡与两阶段检索同构。
+
+UI 第三视图「概念图」：力导向实体网络，节点按类型着色（method/dataset/
+task/concept）、大小 = 关联章节块数，悬停高亮相邻关系，点击实体看描述、
+关系与相关论文并可跳转时间轴。
+
 ## Roadmap
 
 - **P1 引文图（已完成）**：OpenAlex/Semantic Scholar 抓取、`related_papers`

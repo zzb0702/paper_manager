@@ -122,6 +122,7 @@
     <div id="viewToggle">
       <button id="btnTimeline" class="on">时间轴</button>
       <button id="btnForce">关系图</button>
+      <button id="btnKg">概念图</button>
     </div>
     <div id="spin">加载中…</div>
     <div id="hint">
@@ -184,8 +185,11 @@ async function load() {
       if (byId[e.src] && byId[e.dst]) { adj[e.src].push(e); adj[e.dst].push(e); }
     });
     renderClusters();
-    $("hint").style.display = DATA.nodes.length ? "none" : "flex";
-    applyChart(true);
+    if (viewMode === "kg") { renderKg(); }
+    else {
+      $("hint").style.display = DATA.nodes.length ? "none" : "flex";
+      applyChart(true);
+    }
     refreshStats();
   } catch (e) { toast("加载失败: " + e.message, "err"); }
   spin(false);
@@ -370,6 +374,12 @@ window.toggleCluster = toggleCluster;
 
 // ---------------- selection & panel ----------------
 function selectNode(pid) {
+  if (viewMode === "kg") {  // 概念图里点论文 → 先切回时间轴
+    viewMode = "timeline";
+    $("btnTimeline").classList.add("on");
+    $("btnKg").classList.remove("on");
+    applyChart(true);
+  }
   selectedId = pid;
   applyChart();
   showPanel(pid);
@@ -546,10 +556,106 @@ function setView(mode) {
   viewMode = mode;
   $("btnTimeline").classList.toggle("on", mode === "timeline");
   $("btnForce").classList.toggle("on", mode === "force");
+  $("btnKg").classList.toggle("on", mode === "kg");
+  if (mode === "kg") { loadKg(); return; }
   applyChart(true);
 }
 $("btnTimeline").onclick = () => setView("timeline");
 $("btnForce").onclick = () => setView("force");
+$("btnKg").onclick = () => setView("kg");
+
+// ---------------- concept graph view (P2) ----------------
+const KG_TYPES = ["method", "dataset", "task", "concept"];
+const KG_COLOR = { method: "#4f9cf9", dataset: "#7dd87d", task: "#f5a623", concept: "#b07df9" };
+let KG = null;
+
+async function loadKg() {
+  spin(true);
+  try {
+    KG = await api("/api/kg/graph");
+    renderKg();
+  } catch (e) { toast("概念图加载失败: " + e.message, "err"); }
+  spin(false);
+}
+
+function renderKg() {
+  if (!KG.nodes.length) {
+    $("hint").style.display = "flex";
+    $("hint").innerHTML = "<div style='font-size:40px'>🕸️</div>" +
+      "<div>概念图为空 — 先运行 <b>python cli.py build-kg --all</b> 从论文中抽取实体与关系</div>";
+    chart.clear();
+    return;
+  }
+  $("hint").style.display = "none";
+  const cats = KG_TYPES.map(t => ({ name: t, itemStyle: { color: KG_COLOR[t] } }));
+  const nodes = KG.nodes.map(n => ({
+    id: "k" + n.id,
+    name: n.name.length > 30 ? n.name.slice(0, 29) + "…" : n.name,
+    category: Math.max(0, KG_TYPES.indexOf(n.type)),
+    symbolSize: 8 + Math.min(n.n_chunks, 30) / 2.2,
+    entity: n,
+  }));
+  const links = KG.edges.map(e => ({
+    source: "k" + e.src, target: "k" + e.dst, relation: e.relation,
+    lineStyle: { color: "#4a5866", width: 1.2, opacity: 0.7, curveness: 0.1 },
+  }));
+  chart.setOption({
+    backgroundColor: "transparent",
+    legend: {
+      data: KG_TYPES, top: 10, left: 10,
+      textStyle: { color: "#aeb9c4", fontSize: 12 },
+      icon: "circle", itemWidth: 10, itemHeight: 10,
+    },
+    tooltip: {
+      trigger: "item",
+      formatter: p => p.dataType === "node"
+        ? `<b>${esc(p.data.entity.name)}</b>（${p.data.entity.type}，${p.data.entity.n_chunks} 块）` +
+          (p.data.entity.desc ? `<br>${esc(p.data.entity.desc)}` : "")
+        : esc(p.data.relation || "相关"),
+    },
+    series: [{
+      type: "graph", layout: "force", roam: true,
+      data: nodes, links, categories: cats,
+      force: { repulsion: 260, edgeLength: [40, 120], gravity: 0.16 },
+      label: { show: true, position: "right", fontSize: 11, color: "#aeb9c4" },
+      labelLayout: { hideOverlap: true },
+      emphasis: { focus: "adjacency", lineStyle: { width: 2.5, color: "#4f9cf9" } },
+      selectedMode: "single",
+      select: { itemStyle: { borderColor: "#fff", borderWidth: 2, shadowBlur: 12 } },
+    }],
+  }, true);
+}
+
+async function showEntityPanel(eid) {
+  const panel = $("panel"), body = $("panelBody");
+  panel.classList.add("open");
+  body.innerHTML = "<i style='color:#7b8a99'>加载中…</i>";
+  try {
+    const e = await api("/api/kg/entity/" + eid);
+    let html =
+      `<button class="badge" style="float:right;cursor:pointer" onclick="closePanel()">✕ 关闭</button>` +
+      `<h2>${esc(e.name)}</h2>` +
+      `<div class="meta"><span class="badge">${esc(e.type)}</span>` +
+      `</div>` +
+      (e.desc ? `<div class="summary">${esc(e.desc)}</div>` : "");
+    if (e.neighbors.length) {
+      html += `<h4>关系（${e.neighbors.length}）</h4>` + e.neighbors.map(n =>
+        `<div class="rel" onclick="showEntityPanel(${n.id})">` +
+        `${n.direction === "→" ? "→" : "←"} <b>${esc(n.relation)}</b> ` +
+        `${n.direction === "→" ? "" : "→"} ${esc(n.name)} ` +
+        `<small>（${esc(n.type)}）</small></div>`).join("");
+    }
+    if (e.papers.length) {
+      html += `<h4>相关论文（${e.papers.length}）</h4>` + e.papers.map(p =>
+        `<div class="rel" onclick="setView('timeline'); selectNode(${p.paper_id})">` +
+        `[${p.paper_id}] ${esc(p.title)}${p.year ? " (" + p.year + ")" : ""}</div>`).join("");
+    }
+    body.innerHTML = html;
+  } catch (err) {
+    body.innerHTML = `<span style="color:#e4574f">${esc(String(err))}</span>`;
+  }
+}
+window.showEntityPanel = showEntityPanel;
 
 // ---------------- misc ----------------
 document.addEventListener("keydown", e => {
@@ -563,6 +669,11 @@ window.addEventListener("resize", () => chart && chart.resize());
 // ---------------- boot ----------------
 async function boot() {
   chart = echarts.init($("chart"));
+  chart.on("click", p => {
+    if (viewMode === "kg" && p.dataType === "node" && p.data.entity) {
+      showEntityPanel(p.data.entity.id);
+    }
+  });
   await load();
   const pid = new URLSearchParams(location.search).get("paper");
   if (pid && byId[+pid]) selectNode(+pid);

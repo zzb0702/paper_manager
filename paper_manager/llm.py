@@ -8,7 +8,6 @@ import os
 
 import requests
 
-from .config import ROOT  # noqa: F401  (import side effect: loads .env)
 from .convert import UA_HEADERS
 
 
@@ -23,7 +22,8 @@ def _parse_json_loose(body: str) -> dict:
         raise
 
 
-def chat(prompt: str, *, system: str = "", max_tokens: int = 400) -> str:
+def chat(prompt: str, *, system: str = "", max_tokens: int = 400,
+         timeout: float = 120) -> str:
     base = os.getenv("LLM_BASE_URL", "").strip().rstrip("/")
     key = os.getenv("LLM_API_KEY", "").strip()
     model = os.getenv("LLM_MODEL", "").strip()
@@ -46,7 +46,7 @@ def chat(prompt: str, *, system: str = "", max_tokens: int = 400) -> str:
             "max_tokens": max_tokens,
             "temperature": 0.2,
         },
-        timeout=120,
+        timeout=timeout,
     )
     resp.raise_for_status()
     # gateways omit charset; decode from bytes so UTF-8 Chinese survives

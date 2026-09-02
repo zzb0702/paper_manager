@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import struct
@@ -70,6 +71,27 @@ CREATE TABLE IF NOT EXISTS citations(
   UNIQUE(paper_id, direction, ext_id)
 );
 
+-- P2 concept graph: entities/relations extracted by LLM from chunks
+CREATE TABLE IF NOT EXISTS kg_nodes(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,       -- normalized (lowercase, collapsed spaces)
+  display TEXT NOT NULL,
+  type TEXT DEFAULT 'concept',     -- method | dataset | task | concept
+  desc TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS kg_edges(
+  src INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+  dst INTEGER NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
+  relation TEXT DEFAULT '',
+  paper_id INTEGER,                -- evidence provenance (first seen)
+  chunk_id INTEGER,
+  UNIQUE(src, dst, relation)
+);
+CREATE TABLE IF NOT EXISTS kg_chunk_links(
+  chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+  node_ids TEXT NOT NULL           -- JSON array of kg node ids in the chunk
+);
+
 CREATE INDEX IF NOT EXISTS idx_chunks_paper ON chunks(paper_id);
 """
 
@@ -96,6 +118,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
     if "cited_by_count" not in cols:
         conn.execute("ALTER TABLE papers ADD COLUMN cited_by_count INTEGER")
+    if "kg_built_at" not in cols:
+        conn.execute("ALTER TABLE papers ADD COLUMN kg_built_at TEXT")
     conn.commit()
 
 
@@ -411,6 +435,113 @@ def internal_citation_edges(conn: sqlite3.Connection) -> list[dict[str, int]]:
         if src != dst and (src, dst) not in edges:
             edges[(src, dst)] = True
     return [{"src": s, "dst": d} for (s, d) in edges]
+
+
+# ------------------------------------------------------- concept graph (P2)
+
+def get_or_create_kg_node(
+    conn: sqlite3.Connection, name: str, display: str = "",
+    type_: str = "concept", desc: str = "",
+) -> int:
+    norm = _norm_title(name)
+    row = conn.execute("SELECT id FROM kg_nodes WHERE name = ?", (norm,)).fetchone()
+    if row:
+        return int(row["id"])
+    cur = conn.execute(
+        "INSERT INTO kg_nodes (name, display, type, desc) VALUES (?, ?, ?, ?)",
+        (norm, (display or name).strip(), type_ or "concept", (desc or "")[:300]),
+    )
+    return int(cur.lastrowid)
+
+
+def upsert_kg_edge(
+    conn: sqlite3.Connection, src: int, dst: int, relation: str,
+    paper_id: int, chunk_id: int,
+) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO kg_edges (src, dst, relation, paper_id, chunk_id)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (src, dst, relation, paper_id, chunk_id),
+    )
+
+
+def set_chunk_links(
+    conn: sqlite3.Connection, chunk_id: int, node_ids: list[int]
+) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO kg_chunk_links (chunk_id, node_ids) VALUES (?, ?)",
+        (chunk_id, json.dumps(sorted(set(node_ids)))),
+    )
+
+
+def set_kg_built(conn: sqlite3.Connection, paper_id: int) -> None:
+    conn.execute(
+        "UPDATE papers SET kg_built_at = datetime('now') WHERE id = ?",
+        (paper_id,),
+    )
+
+
+def papers_without_kg(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT id, title FROM papers WHERE kg_built_at IS NULL ORDER BY id"
+    ).fetchall()
+
+
+def kg_graph(conn: sqlite3.Connection) -> dict[str, list]:
+    """Whole concept graph, compact, with per-entity chunk-link counts."""
+    nodes = []
+    counts = {}
+    for r in conn.execute("SELECT chunk_id, node_ids FROM kg_chunk_links"):
+        for nid in json.loads(r["node_ids"]):
+            counts[nid] = counts.get(nid, 0) + 1
+    for r in conn.execute("SELECT id, display, type, desc FROM kg_nodes"):
+        nodes.append({
+            "id": r["id"], "name": r["display"], "type": r["type"],
+            "desc": r["desc"], "n_chunks": counts.get(r["id"], 0),
+        })
+    edges = [
+        {"src": r["src"], "dst": r["dst"], "relation": r["relation"]}
+        for r in conn.execute("SELECT src, dst, relation FROM kg_edges")
+    ]
+    return {"nodes": nodes, "edges": edges}
+
+
+def kg_entity_detail(conn: sqlite3.Connection, node_id: int) -> dict[str, Any] | None:
+    node = conn.execute(
+        "SELECT id, display, type, desc FROM kg_nodes WHERE id = ?", (node_id,)
+    ).fetchone()
+    if not node:
+        return None
+    neighbors = []
+    linked_papers: dict[int, None] = {}
+    for r in conn.execute(
+        "SELECT e.relation, e.src, e.dst, e.paper_id FROM kg_edges e "
+        "WHERE e.src = ? OR e.dst = ?",
+        (node_id, node_id),
+    ):
+        other_id = r["dst"] if r["src"] == node_id else r["src"]
+        direction = "→" if r["src"] == node_id else "←"
+        other = conn.execute(
+            "SELECT display, type FROM kg_nodes WHERE id = ?", (other_id,)
+        ).fetchone()
+        if other:
+            neighbors.append({
+                "id": other_id, "name": other["display"], "type": other["type"],
+                "relation": r["relation"], "direction": direction,
+            })
+        if r["paper_id"]:
+            linked_papers[r["paper_id"]] = None
+    papers = []
+    for pid in linked_papers:
+        p = conn.execute(
+            "SELECT id, title, year FROM papers WHERE id = ?", (pid,)
+        ).fetchone()
+        if p:
+            papers.append({"paper_id": p["id"], "title": p["title"], "year": p["year"]})
+    return {
+        "id": node["id"], "name": node["display"], "type": node["type"],
+        "desc": node["desc"], "neighbors": neighbors, "papers": papers,
+    }
 
 
 # ---------------------------------------------------------------- search

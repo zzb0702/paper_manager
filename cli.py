@@ -159,6 +159,46 @@ def cmd_related(args: argparse.Namespace) -> None:
         conn.close()
 
 
+def cmd_build_kg(args: argparse.Namespace) -> None:
+    from paper_manager import kg
+
+    conn = db.connect()
+    try:
+        if args.paper_id:
+            rows = [r for r in [db.get_paper(conn, args.paper_id)] if r]
+        else:
+            rows = db.papers_without_kg(conn)
+        if not rows:
+            print("没有待构建的论文（概念图已全部构建）")
+            return
+        for row in rows:
+            try:
+                r = kg.build_paper_kg(conn, row["id"])
+                print(
+                    f"[{r['status']}] {r['title'][:50]} — "
+                    f"实体 {r.get('entities', 0)}，关系 {r.get('relations', 0)}"
+                    f"，关联块 {r.get('chunks_linked', 0)}"
+                )
+            except Exception as exc:
+                print(f"[error] {row['title'][:50]}: {type(exc).__name__}: {exc}")
+    finally:
+        conn.close()
+
+
+def cmd_kg_search(args: argparse.Namespace) -> None:
+    from paper_manager import kg
+
+    conn = db.connect()
+    try:
+        res = kg.search_graph(
+            conn, args.query, top_k=args.top_k,
+            embedder=EmbeddingClient.from_env(),
+        )
+        print(kg.format_graph_result(res, args.query))
+    finally:
+        conn.close()
+
+
 def cmd_list(_: argparse.Namespace) -> None:
     conn = db.connect()
     try:
@@ -247,6 +287,16 @@ def main() -> None:
     p.add_argument("paper_id", type=int)
     p.add_argument("-k", "--top-k", type=int, default=5)
     p.set_defaults(func=cmd_related)
+
+    p = sub.add_parser("build-kg", help="LLM 抽取实体/关系构建概念图")
+    p.add_argument("paper_id", type=int, nargs="?", default=None)
+    p.add_argument("--all", action="store_true", help="构建所有未构建的论文")
+    p.set_defaults(func=cmd_build_kg)
+
+    p = sub.add_parser("kg", help="概念图检索（双层：实体→邻域→章节）")
+    p.add_argument("query")
+    p.add_argument("-k", "--top-k", type=int, default=5)
+    p.set_defaults(func=cmd_kg_search)
 
     args = ap.parse_args()
     args.func(args)

@@ -202,6 +202,27 @@ def paper_pdf(paper_id: int) -> FileResponse:
                         filename=safe_name)
 
 
+@app.get("/api/kg/graph")
+def kg_graph() -> dict:
+    conn = db.connect()
+    try:
+        return db.kg_graph(conn)
+    finally:
+        conn.close()
+
+
+@app.get("/api/kg/entity/{node_id}")
+def kg_entity(node_id: int) -> dict:
+    conn = db.connect()
+    try:
+        detail = db.kg_entity_detail(conn, node_id)
+        if not detail:
+            raise HTTPException(404, "entity not found")
+        return detail
+    finally:
+        conn.close()
+
+
 @app.get("/api/search")
 def search(q: str, top_k: int = 8) -> dict:
     if not q.strip():

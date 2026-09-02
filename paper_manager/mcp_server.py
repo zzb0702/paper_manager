@@ -219,6 +219,31 @@ def related_papers(paper_id: int, top_k: int = 5) -> str:
     return "\n".join(lines)
 
 
+@mcp.tool()
+def search_graph(query: str, top_k: int = 5) -> str:
+    """概念图检索：按研究概念/方法/任务查找论文（与 search_papers 互补）。
+
+    从概念图中找到与问题相关的实体（如 LightRAG、知识图谱、双层级检索），
+    沿关系扩展一跳邻居，再回溯到讨论这些概念的论文与章节。适合
+    “哪些论文用了 X 方法”“X 和 Y 有什么关系”这类概念性问题——
+    普通语义搜索对这类问题命中率低。
+
+    Args:
+        query: 概念性问题或术语（如 “graph rag 双层检索”）。
+        top_k: 返回论文数，默认 5。
+    """
+    from . import kg
+
+    conn = db.connect()
+    try:
+        res = kg.search_graph(
+            conn, query, top_k=top_k, embedder=EmbeddingClient.from_env()
+        )
+        return kg.format_graph_result(res, query)
+    finally:
+        conn.close()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Paper manager MCP server")
     ap.add_argument("--http", action="store_true", help="streamable HTTP transport")
