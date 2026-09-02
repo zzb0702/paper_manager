@@ -362,10 +362,11 @@ def search(
         _backfill_paper_index(conn, embedder)
         candidates = _stage1_candidates(conn, queries, allowed, embedder)
         if candidates:
-            return _stage2(
-                conn, queries, candidates, top_k, embedder, reranker
-            )[:top_k]
-        # empty stage 1 (e.g. library without paper index): global fallback
+            hits = _stage2(conn, queries, candidates, top_k, embedder, reranker)
+            if hits:
+                return hits[:top_k]
+        # 阶段二为空（论文级命中但章节级全不匹配，如 chunk 无向量且
+        # 查询词只在摘要里）→ 回退全局章节检索
 
     return _global_chunk_search(
         conn, queries, allowed, top_k, per_paper, embedder, reranker

@@ -174,7 +174,16 @@ def convert_datalab(
             continue
 
         if resp.status_code == 200:
-            result = _datalab_poll(resp.json()["request_check_url"], key)
+            # 提交成功即已按 key 计费；轮询阶段的网络异常换 key 重提交会
+            # 重复扣费，所以这里不切换 key，只把错误说清楚。
+            try:
+                check_url = resp.json()["request_check_url"]
+                result = _datalab_poll(check_url, key)
+            except requests.RequestException as exc:
+                raise RuntimeError(
+                    f"[DATALAB key#{idx}] 轮询结果时网络异常"
+                    f"（转换可能已计费，请稍后用 --force 重试）: {exc}"
+                ) from exc
             if not result.get("success"):
                 raise RuntimeError(
                     f"Datalab 转换失败: {str(result.get('error'))[:300]}"
@@ -182,14 +191,27 @@ def convert_datalab(
             markdown = result.get("markdown") or ""
             breakdown = result.get("cost_breakdown") or {}
             cents = breakdown.get("final_cost_cents", result.get("total_cost"))
+
+            # 云端转换不回传元数据：用 PyMuPDF 本地补一次 author/date
+            meta: dict[str, Any] = {}
+            front_text = ""
+            try:
+                import pymupdf
+
+                doc = pymupdf.open(str(pdf_path))
+                meta = dict(doc.metadata or {})
+                front_text = "".join(p.get_text("text") for p in doc[:4])
+            except Exception:
+                pass
+
             return {
                 "markdown": markdown,
                 "page_count": result.get("page_count"),
                 "cost_usd": (cents / 100) if cents is not None else None,
                 "key_index": idx,
                 "keys_available": pool.status(),
-                "meta": {},
-                "front_text": markdown[:4000],
+                "meta": meta,
+                "front_text": (front_text or markdown)[:4000],
             }
 
         body = resp.text[:300]

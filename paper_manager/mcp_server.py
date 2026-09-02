@@ -21,7 +21,6 @@ from mcp.server.fastmcp import FastMCP
 from . import db, retriever
 from .embedder import EmbeddingClient, RerankerClient
 from .ingest import ingest_pdf as _ingest_pdf
-from .util import log
 
 mcp = FastMCP(
     "paper-manager",

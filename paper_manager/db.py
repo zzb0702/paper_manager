@@ -321,9 +321,6 @@ def library_neighbors(conn: sqlite3.Connection, paper_id: int) -> dict[str, list
         "SELECT direction, ext_id, title, year FROM citations WHERE paper_id = ?",
         (paper_id,),
     ).fetchall()
-    my_doi = (conn.execute(
-        "SELECT doi FROM papers WHERE id = ?", (paper_id,)
-    ).fetchone() or {"doi": ""})["doi"]
 
     for r in rows:
         target = None

@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 
 from . import db, retriever, scholar
@@ -201,8 +202,10 @@ async def ingest(
     try:
         from .ingest import ingest_pdf
 
-        report = ingest_pdf(
-            tmp_path, engine=engine, embedder=EmbeddingClient.from_env()
+        # 分钟级的转换/轮询必须丢进线程池，否则整个事件循环被卡死
+        report = await run_in_threadpool(
+            ingest_pdf, tmp_path,
+            engine=engine, embedder=EmbeddingClient.from_env(),
         )
         return JSONResponse(report)
     except Exception as exc:

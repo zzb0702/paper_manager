@@ -16,6 +16,7 @@ then on normalized title.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import time
@@ -152,7 +153,7 @@ def _fetch_openalex(title: str, doi: str) -> dict[str, Any] | None:
 
 # ------------------------------------------------ Semantic Scholar fallback
 
-def _ext_id(ext: dict[str, Any] | None) -> str:
+def _ext_id(ext: dict[str, Any] | None, title: str = "") -> str:
     ext = ext or {}
     if ext.get("DOI"):
         return f"doi:{ext['DOI']}"
@@ -160,6 +161,10 @@ def _ext_id(ext: dict[str, Any] | None) -> str:
         return f"arxiv:{ext['ArXiv']}"
     if ext.get("CorpusId"):
         return f"corpus:{ext['CorpusId']}"
+    # citations 表有 UNIQUE(paper_id,direction,ext_id)：无外部 ID 的行
+    # 用标题哈希兜底，避免同方向的多条记录被 OR IGNORE 折叠成一条
+    if title:
+        return "th:" + hashlib.sha1(title.lower().encode()).hexdigest()[:16]
     return ""
 
 
@@ -212,12 +217,12 @@ def _fetch_s2(title: str, doi: str) -> dict[str, Any] | None:
     )
     return {
         "refs": [
-            {"ext_id": _ext_id(r.get("externalIds")), "title": r.get("title") or "",
+            {"ext_id": _ext_id(r.get("externalIds"), r.get("title") or ""), "title": r.get("title") or "",
              "year": r.get("year")}
             for r in data.get("references") or [] if r.get("title")
         ],
         "cited": [
-            {"ext_id": _ext_id(r.get("externalIds")), "title": r.get("title") or "",
+            {"ext_id": _ext_id(r.get("externalIds"), r.get("title") or ""), "title": r.get("title") or "",
              "year": r.get("year")}
             for r in data.get("citations") or [] if r.get("title")
         ],
@@ -246,7 +251,8 @@ def fetch_citations(conn, paper_id: int) -> dict[str, Any]:
         result = _fetch_s2(title, doi)
 
     if result is None:
-        db.upsert_citations(conn, paper_id, [], [])
+        # 不写 fetched_at：未收录的论文（如 OpenAlex 尚缺的 GraphRAG）
+        # 保留在待抓取队列里，--all 下次运行会自动重试
         return {
             "paper_id": paper_id, "title": title, "status": "not_found",
             "refs": 0, "cited": 0, "source": source,

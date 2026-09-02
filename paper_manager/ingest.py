@@ -58,8 +58,6 @@ def ingest_pdf(
         raise FileNotFoundError(f"PDF 不存在: {pdf_path}")
     ensure_dirs()
 
-    import sqlite3
-
     conn = db.connect()
     sha = db.sha256_of(pdf_path)
     existing = db.find_by_sha(conn, sha)
@@ -158,7 +156,7 @@ def ingest_pdf(
 
 
 def ingest_dir(
-    directory: str | Path, *, engine: str = "local", **kw: Any
+    directory: str | Path, *, engine: str = "datalab", **kw: Any
 ) -> list[dict[str, Any]]:
     directory = Path(directory)
     pdfs = sorted(directory.rglob("*.pdf"))
