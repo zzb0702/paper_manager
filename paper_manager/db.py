@@ -319,6 +319,14 @@ def set_cited_by_count(conn: sqlite3.Connection, paper_id: int, n: int) -> None:
     conn.commit()
 
 
+def set_authors(conn: sqlite3.Connection, paper_id: int, authors: str) -> None:
+    """PDF 元数据缺作者时（arXiv LaTeX PDF 常见），用 OpenAlex/S2 回填。"""
+    conn.execute(
+        "UPDATE papers SET authors = ? WHERE id = ?", (authors[:300], paper_id)
+    )
+    conn.commit()
+
+
 def chunk_counts(conn: sqlite3.Connection) -> dict[int, int]:
     return {
         r["paper_id"]: r["c"]

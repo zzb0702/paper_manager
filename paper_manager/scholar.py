@@ -31,7 +31,7 @@ OA_BASE = "https://api.openalex.org"
 MAILTO = "you@example.com"  # polite-pool contact; replace for heavy use
 S2_BASE = "https://api.semanticscholar.org/graph/v1"
 
-SELECT = "id,doi,title,publication_year,cited_by_count"
+SELECT = "id,doi,title,publication_year,cited_by_count,authorships"
 
 
 def _norm(title: str) -> str:
@@ -126,6 +126,18 @@ def _oa_reference_titles(ref_ids: list[str]) -> list[dict[str, Any]]:
     return works
 
 
+def _oa_authors(work: dict[str, Any]) -> str:
+    names = [
+        (a.get("author") or {}).get("display_name") or ""
+        for a in work.get("authorships") or []
+    ]
+    names = [n for n in names if n]
+    if not names:
+        return ""
+    joined = ", ".join(names[:8])
+    return joined + (" …" if len(names) > 8 else "")
+
+
 def _fetch_openalex(title: str, doi: str) -> dict[str, Any] | None:
     work = _resolve_work(title, doi)
     if not work:
@@ -133,7 +145,8 @@ def _fetch_openalex(title: str, doi: str) -> dict[str, Any] | None:
     wid = _wid(work.get("id", ""))
     # resolve 用 select 限定了字段；referenced_works/cited_by_count 单独取
     full = _oa_get(
-        f"/works/{wid}", {"select": "id,referenced_works,cited_by_count"}
+        f"/works/{wid}",
+        {"select": "id,referenced_works,cited_by_count,authorships"},
     )
     ref_ids = [_wid(u) for u in (full or {}).get("referenced_works") or []]
     refs = _rows_from_works(_oa_reference_titles(ref_ids))
@@ -149,6 +162,7 @@ def _fetch_openalex(title: str, doi: str) -> dict[str, Any] | None:
         "refs": refs,
         "cited": cited,
         "cited_by_count": (full or {}).get("cited_by_count"),
+        "authors": _oa_authors(full or work),
         "s2_id": f"openalex:{wid}",
         "resolved_title": work.get("title") or "",
     }
@@ -211,12 +225,15 @@ def _fetch_s2(title: str, doi: str) -> dict[str, Any] | None:
     data = _s2_get(
         f"{S2_BASE}/paper/{s2_id}",
         {
-            "fields": "title,year,citationCount,externalIds,references.title,"
-                      "references.year,references.externalIds,"
+            "fields": "title,year,citationCount,authors,externalIds,"
+                      "references.title,references.year,references.externalIds,"
                       "citations.title,citations.year,citations.externalIds",
             "references.limit": 100,
             "citations.limit": 50,
         },
+    )
+    s2_authors = ", ".join(
+        a.get("name") for a in data.get("authors") or [] if a.get("name")
     )
     return {
         "refs": [
@@ -230,6 +247,7 @@ def _fetch_s2(title: str, doi: str) -> dict[str, Any] | None:
             for r in data.get("citations") or [] if r.get("title")
         ],
         "cited_by_count": data.get("citationCount"),
+        "authors": s2_authors,
         "s2_id": s2_id,
         "resolved_title": data.get("title") or "",
     }
@@ -266,6 +284,8 @@ def fetch_citations(conn, paper_id: int) -> dict[str, Any]:
     n_cited = result.get("cited_by_count")
     if n_cited is not None:
         db.set_cited_by_count(conn, paper_id, n_cited)
+    if result.get("authors"):
+        db.set_authors(conn, paper_id, result["authors"])
     return {
         "paper_id": paper_id,
         "title": title,
@@ -274,6 +294,7 @@ def fetch_citations(conn, paper_id: int) -> dict[str, Any]:
         "cited": len(result["cited"]),
         "stored": stored,
         "cited_by_count": n_cited,
+        "authors": result.get("authors") or "",
         "source": source,
         "s2_id": result["s2_id"],
     }
