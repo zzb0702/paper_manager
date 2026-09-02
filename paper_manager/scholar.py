@@ -31,7 +31,7 @@ OA_BASE = "https://api.openalex.org"
 MAILTO = "you@example.com"  # polite-pool contact; replace for heavy use
 S2_BASE = "https://api.semanticscholar.org/graph/v1"
 
-SELECT = "id,doi,title,publication_year"
+SELECT = "id,doi,title,publication_year,cited_by_count"
 
 
 def _norm(title: str) -> str:
@@ -131,8 +131,10 @@ def _fetch_openalex(title: str, doi: str) -> dict[str, Any] | None:
     if not work:
         return None
     wid = _wid(work.get("id", ""))
-    # resolve 用 select 限定了字段；referenced_works 需要单独取
-    full = _oa_get(f"/works/{wid}", {"select": "id,referenced_works"})
+    # resolve 用 select 限定了字段；referenced_works/cited_by_count 单独取
+    full = _oa_get(
+        f"/works/{wid}", {"select": "id,referenced_works,cited_by_count"}
+    )
     ref_ids = [_wid(u) for u in (full or {}).get("referenced_works") or []]
     refs = _rows_from_works(_oa_reference_titles(ref_ids))
     cited_data = _oa_get(
@@ -146,6 +148,7 @@ def _fetch_openalex(title: str, doi: str) -> dict[str, Any] | None:
     return {
         "refs": refs,
         "cited": cited,
+        "cited_by_count": (full or {}).get("cited_by_count"),
         "s2_id": f"openalex:{wid}",
         "resolved_title": work.get("title") or "",
     }
@@ -208,9 +211,9 @@ def _fetch_s2(title: str, doi: str) -> dict[str, Any] | None:
     data = _s2_get(
         f"{S2_BASE}/paper/{s2_id}",
         {
-            "fields": "title,year,externalIds,references.title,references.year,"
-                      "references.externalIds,citations.title,citations.year,"
-                      "citations.externalIds",
+            "fields": "title,year,citationCount,externalIds,references.title,"
+                      "references.year,references.externalIds,"
+                      "citations.title,citations.year,citations.externalIds",
             "references.limit": 100,
             "citations.limit": 50,
         },
@@ -226,6 +229,7 @@ def _fetch_s2(title: str, doi: str) -> dict[str, Any] | None:
              "year": r.get("year")}
             for r in data.get("citations") or [] if r.get("title")
         ],
+        "cited_by_count": data.get("citationCount"),
         "s2_id": s2_id,
         "resolved_title": data.get("title") or "",
     }
@@ -259,6 +263,9 @@ def fetch_citations(conn, paper_id: int) -> dict[str, Any]:
         }
 
     stored = db.upsert_citations(conn, paper_id, result["refs"], result["cited"])
+    n_cited = result.get("cited_by_count")
+    if n_cited is not None:
+        db.set_cited_by_count(conn, paper_id, n_cited)
     return {
         "paper_id": paper_id,
         "title": title,
@@ -266,6 +273,7 @@ def fetch_citations(conn, paper_id: int) -> dict[str, Any]:
         "refs": len(result["refs"]),
         "cited": len(result["cited"]),
         "stored": stored,
+        "cited_by_count": n_cited,
         "source": source,
         "s2_id": result["s2_id"],
     }

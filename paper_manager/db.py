@@ -94,7 +94,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             f"ALTER TABLE papers ADD COLUMN {_CITED_AT_COLUMN} TEXT"
         )
-        conn.commit()
+    if "cited_by_count" not in cols:
+        conn.execute("ALTER TABLE papers ADD COLUMN cited_by_count INTEGER")
+    conn.commit()
 
 
 def vec_to_blob(vector: list[float]) -> bytes:
@@ -308,6 +310,22 @@ def papers_without_citations(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         "SELECT id, title, doi FROM papers WHERE citations_fetched_at IS NULL "
         "ORDER BY id"
     ).fetchall()
+
+
+def set_cited_by_count(conn: sqlite3.Connection, paper_id: int, n: int) -> None:
+    conn.execute(
+        "UPDATE papers SET cited_by_count = ? WHERE id = ?", (int(n), paper_id)
+    )
+    conn.commit()
+
+
+def chunk_counts(conn: sqlite3.Connection) -> dict[int, int]:
+    return {
+        r["paper_id"]: r["c"]
+        for r in conn.execute(
+            "SELECT paper_id, COUNT(*) c FROM chunks GROUP BY paper_id"
+        )
+    }
 
 
 def library_neighbors(conn: sqlite3.Connection, paper_id: int) -> dict[str, list]:

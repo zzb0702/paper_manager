@@ -15,6 +15,7 @@ so the field's development reads left to right.
 from __future__ import annotations
 
 import argparse
+import re
 import tempfile
 from pathlib import Path
 
@@ -22,12 +23,16 @@ import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import db, retriever, scholar
 from .config import ROOT
 from .embedder import EmbeddingClient, RerankerClient
 
 app = FastAPI(title="Paper Manager")
+app.mount(
+    "/static", StaticFiles(directory=Path(ROOT) / "static"), name="static"
+)
 
 _SIM_THRESHOLD = 0.55
 _SIM_TOP = 2
@@ -92,9 +97,10 @@ def graph(sim: float = _SIM_THRESHOLD) -> dict:
     conn = db.connect()
     try:
         rows = conn.execute(
-            "SELECT id, title, authors, year, summary, citations_fetched_at "
-            "FROM papers ORDER BY year, id"
+            "SELECT id, title, authors, year, summary, cited_by_count,"
+            " citations_fetched_at FROM papers ORDER BY year, id"
         ).fetchall()
+        counts = db.chunk_counts(conn)
         nodes = [
             {
                 "id": r["id"],
@@ -102,6 +108,8 @@ def graph(sim: float = _SIM_THRESHOLD) -> dict:
                 "authors": r["authors"],
                 "year": r["year"],
                 "summary": (r["summary"] or "")[:220],
+                "cited_by_count": r["cited_by_count"] or 0,
+                "n_chunks": counts.get(r["id"], 0),
                 "has_citations": r["citations_fetched_at"] is not None,
             }
             for r in rows
@@ -166,6 +174,32 @@ def paper_detail(paper_id: int) -> dict:
         }
     finally:
         conn.close()
+
+
+@app.get("/api/paper/{paper_id}/markdown")
+def paper_markdown(paper_id: int) -> FileResponse:
+    conn = db.connect()
+    try:
+        row = db.get_paper(conn, paper_id)
+    finally:
+        conn.close()
+    if not row or not row["md_path"] or not Path(row["md_path"]).is_file():
+        raise HTTPException(404, "markdown not found")
+    return FileResponse(row["md_path"], media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/api/paper/{paper_id}/pdf")
+def paper_pdf(paper_id: int) -> FileResponse:
+    conn = db.connect()
+    try:
+        row = db.get_paper(conn, paper_id)
+    finally:
+        conn.close()
+    if not row or not row["pdf_path"] or not Path(row["pdf_path"]).is_file():
+        raise HTTPException(404, "pdf not found")
+    safe_name = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", row["title"])[:60] + ".pdf"
+    return FileResponse(row["pdf_path"], media_type="application/pdf",
+                        filename=safe_name)
 
 
 @app.get("/api/search")
