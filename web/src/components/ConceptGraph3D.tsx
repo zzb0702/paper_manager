@@ -122,6 +122,29 @@ export default function ConceptGraph3D() {
     return m;
   }, [kg, graphData]);
 
+  // Perf: sprites are the most expensive objects here (transparent textured
+  // quads, one draw call each, and they also join hover raycasting), so only
+  // frequently-mentioned entities get a standing label; the rest light up
+  // temporarily while hovered. Same trick as vasturiano's proximity-label
+  // example, minus the per-frame distance loop.
+  const LABEL_MIN_CHUNKS = 2;
+  const spriteMap = useRef(new Map<number, SpriteText>());
+  const chunksById = useMemo(
+    () => new Map((kg?.nodes || []).map((n) => [n.id, n.n_chunks] as const)),
+    [kg],
+  );
+  const labelOn = (id: number) => (chunksById.get(id) ?? 0) >= LABEL_MIN_CHUNKS;
+
+  // Renderer cost scales with devicePixelRatio^2; on 125–200% Windows scaling
+  // that multiplies every frame for little visual gain. Cap it (reapplied on
+  // resize since three-render-objects resets the ratio then).
+  useEffect(() => {
+    const fg = fgRef.current as unknown as
+      | { renderer?: () => { setPixelRatio: (v: number) => void } }
+      | undefined;
+    fg?.renderer?.().setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  }, [kg, size.w, size.h]);
+
   // Early framing pass during layout, then the real fit on onEngineStop —
   // the only deterministic signal that d3-force has finished expanding.
   useEffect(() => {
@@ -160,6 +183,7 @@ export default function ConceptGraph3D() {
         width={size.w}
         height={size.h}
         backgroundColor="#0f1419"
+        rendererConfig={{ antialias: false, powerPreference: "high-performance" }}
         nodeVal={(n) => nodeValOf(n as KgNode)}
         nodeRelSize={REL_SIZE}
         nodeColor={(n) => {
@@ -175,10 +199,12 @@ export default function ConceptGraph3D() {
         }}
         nodeThreeObject={(n: NodeObject) => {
           const node = n as KgNode;
+          if (!labelOn(node.id)) return null; // default sphere only, no sprite
           const name = node.name.length > 30 ? node.name.slice(0, 29) + "…" : node.name;
           const sprite = new SpriteText(name);
           sprite.color = "#aeb9c4";
           sprite.textHeight = 2.2;
+          spriteMap.current.set(node.id, sprite);
           // three ships no typings, so SpriteText's base members resolve as errors
           // here — position exists at runtime (Object3D) and is set via a cast.
           (sprite as unknown as { position: { y: number } }).position.y = -(radiusOf(node) + 2.8);
@@ -191,12 +217,6 @@ export default function ConceptGraph3D() {
           return (pid != null ? paperLinkColor.get(pid) : null) ?? "rgba(130,150,170,.9)";
         }}
         linkWidth={(l) => (active && hlLinks.has(l) ? 2.4 : 1.2)}
-        linkDirectionalArrowLength={3.2}
-        linkDirectionalArrowColor={(l) => {
-          const pid = (l as FgLink).paper_id;
-          return (pid != null ? paperLinkColor.get(pid) : null) ?? "#8296aa";
-        }}
-        linkDirectionalArrowRelPos={1}
         linkLabel={(l) => {
           const fl = l as FgLink;
           const p = fl.paper_id != null ? byId.get(fl.paper_id) : undefined;
@@ -209,11 +229,18 @@ export default function ConceptGraph3D() {
           if (!node) {
             setHlNodes(new Set());
             setHlLinks(new Set());
+            spriteMap.current.forEach((sp, id) => {
+              (sp as unknown as { visible: boolean }).visible = labelOn(id);
+            });
             return;
           }
           const adj = adjacency.get(node.id);
           setHlNodes(adj ? adj.nodes : new Set());
           setHlLinks(adj ? adj.links : new Set());
+          // reveal the hovered neighborhood's labels even for minor entities
+          spriteMap.current.forEach((sp, id) => {
+            (sp as unknown as { visible: boolean }).visible = labelOn(id) || (adj?.nodes.has(id) ?? false);
+          });
         }}
         onNodeClick={(n) => showEntity((n as KgNode).id)}
         onEngineStop={fitOnEngineStop}
