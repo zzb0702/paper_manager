@@ -28,7 +28,7 @@ from . import db
 from .util import log
 
 OA_BASE = "https://api.openalex.org"
-MAILTO = "you@example.com"  # polite-pool contact; replace for heavy use
+MAILTO = "you@example.com"  # polite-pool contact; replace with your email for heavy use
 S2_BASE = "https://api.semanticscholar.org/graph/v1"
 
 SELECT = "id,doi,title,publication_year,cited_by_count,authorships"

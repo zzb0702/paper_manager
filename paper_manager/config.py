@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Paths and environment loading.
 
-Env contract intentionally mirrors other-local-project so the same
-.env file (SILICONFLOW / LLM / DATALAB keys) works for both projects.
+The .env key names are intentionally kept generic (SILICONFLOW / LLM /
+DATALAB) so one credentials file can be reused across local projects.
 """
 
 from __future__ import annotations

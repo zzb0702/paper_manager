@@ -4,11 +4,11 @@
 Run:  python -m paper_manager.mcp_server          (stdio)
       python -m paper_manager.mcp_server --http   (127.0.0.1:8820/mcp)
 
-Agent-side .mcp.json entry (other-local-project mcp_bridge):
+Agent-side .mcp.json entry (use an absolute interpreter path and the repo root):
   "papers": {
-    "command": "/path/to/python",
+    "command": "/absolute/path/to/python",
     "args": ["-m", "paper_manager.mcp_server"],
-    "cwd": "/path/to/paper_manager"
+    "cwd": "/absolute/path/to/paper_manager"
   }
 """
 

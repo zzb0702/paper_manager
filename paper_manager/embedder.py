@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Embedding / reranker adapters (same env contract as other-local-project).
+"""Embedding / reranker adapters (shared env contract, see config.py).
 
 EMBEDDING_BASE_URL + EMBEDDING_MODEL enable vectors;
 RERANK_BASE_URL + RERANK_MODEL enable reranking;
