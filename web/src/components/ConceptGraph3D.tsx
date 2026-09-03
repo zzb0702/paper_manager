@@ -182,7 +182,9 @@ export default function ConceptGraph3D() {
         }}
         onNodeClick={(n) => showEntity((n as KgNode).id)}
       />
-      <div className="pointer-events-none absolute left-24 top-3 z-10 flex max-w-[420px] flex-col gap-1 text-xs text-ink">
+      {/* Opaque card below the view-toggle tabs: without a background the 3D
+          nodes and labels render straight through the legend and it becomes unreadable. */}
+      <div className="pointer-events-none absolute left-2.5 top-11 z-10 flex max-w-[340px] flex-col gap-1 rounded-lg border border-line bg-panel/90 px-3 py-2 text-xs text-ink shadow-lg backdrop-blur-sm">
         <span className="text-[10px] text-dim">节点 = 实体类型</span>
         {KG_TYPES.map((t) => (
           <span key={t} className="flex items-center gap-1.5">
@@ -190,14 +192,16 @@ export default function ConceptGraph3D() {
             {t}
           </span>
         ))}
-        <span className="mt-1 text-[10px] text-dim">连线 = 来源论文（同篇论文抽出的关系同色）</span>
+        <span className="mt-1.5 border-t border-line pt-1.5 text-[10px] text-dim">
+          连线 = 来源论文（同篇论文抽出的关系同色）
+        </span>
         {[...paperLinkColor.entries()].map(([pid, color]) => {
           const p = byId.get(pid);
           const title = p ? `${p.title.slice(0, 32)}${p.title.length > 32 ? "…" : ""}` : `#${pid}`;
           return (
-            <span key={pid} className="flex items-center gap-1.5">
-              <span className="inline-block h-[3px] w-4 rounded-sm" style={{ background: color }} />
-              [{pid}] {title}
+            <span key={pid} className="flex min-w-0 items-center gap-1.5">
+              <span className="inline-block h-[3px] w-4 shrink-0 rounded-sm" style={{ background: color }} />
+              <span className="truncate">[{pid}] {title}</span>
             </span>
           );
         })}
