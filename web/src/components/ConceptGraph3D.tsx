@@ -2,7 +2,7 @@ import ForceGraph3D, { type ForceGraphMethods, type NodeObject } from "react-for
 import { useEffect, useMemo, useRef, useState } from "react";
 import SpriteText from "three-spritetext";
 import { useApp } from "../store";
-import { PALETTE } from "../palette";
+import { PALETTE, lighten } from "../palette";
 import type { KgNode } from "../types";
 
 // Node payload after react-force-graph decorates it with x/y/z.
@@ -35,6 +35,33 @@ function radiusOf(n: KgNode) {
   return REL_SIZE * Math.cbrt((nodeValOf(n) * 0.75) / Math.PI);
 }
 
+// Manual camera fit: rfg's zoomToFit kept landing far too close on this
+// dataset (bounding-sphere + fov heuristic), so place the camera at a fixed
+// multiple of the graph's actual radius, along the current viewing direction.
+function fitCamera(fg: ForceGraphMethods | undefined, factor: number, ms: number) {
+  const nodes = ((fg as unknown as { graphData(): { nodes: object[] } } | undefined)?.graphData()?.nodes ??
+    []) as FgNode[];
+  if (!fg || !nodes.length) return;
+  let cx = 0, cy = 0, cz = 0;
+  for (const n of nodes) {
+    cx += n.x ?? 0; cy += n.y ?? 0; cz += n.z ?? 0;
+  }
+  cx /= nodes.length; cy /= nodes.length; cz /= nodes.length;
+  let r = 0;
+  for (const n of nodes) {
+    r = Math.max(r, Math.hypot((n.x ?? 0) - cx, (n.y ?? 0) - cy, (n.z ?? 0) - cz));
+  }
+  const p = fg.camera().position;
+  const dx = p.x - cx, dy = p.y - cy, dz = p.z - cz;
+  const len = Math.hypot(dx, dy, dz) || 1;
+  const dist = r * factor + 60;
+  fg.cameraPosition(
+    { x: cx + (dx / len) * dist, y: cy + (dy / len) * dist, z: cz + (dz / len) * dist },
+    { x: cx, y: cy, z: cz },
+    ms,
+  );
+}
+
 export default function ConceptGraph3D() {
   const kg = useApp((s) => s.kg);
   const byId = useApp((s) => s.byId);
@@ -50,18 +77,15 @@ export default function ConceptGraph3D() {
   // rfg-3d falls back to window size when auto-detecting on a freshly-mounted
   // parent, which then overflows the grid column and breaks the whole layout;
   // size is driven explicitly from the wrapper instead.
-	  // No more explicit size — parent container (grid column) is now responsible for
-	  // the canvas size. This lets the user freely zoom/rotate/resize the 3D graph
-	  // without layout shift or forced scaling limits.
-	  useEffect(() => {
-	    const el = wrapRef.current;
-	    if (!el) return;
-	    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
-	    measure();
-	    const ro = new ResizeObserver(measure);
-	    ro.observe(el);
-	    return () => ro.disconnect();
-	  }, [kg]);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [kg]);
 
   // Deep-ish copy: rfg mutates node/link objects in place; keep the store clean.
   const graphData = useMemo(() => {
@@ -76,11 +100,12 @@ export default function ConceptGraph3D() {
 
   // Links are tinted by the library paper they were extracted from
   // (kg_edges.paper_id) — one stable color per paper, sorted-id -> palette index.
+  // Each hue is mixed toward white so thin lines stay readable on #0f1419.
   const paperLinkColor = useMemo(() => {
     const ids = [...new Set((kg?.edges || []).map((e) => e.paper_id).filter((p): p is number => p != null))].sort(
       (a, b) => a - b,
     );
-    return new Map(ids.map((pid, i) => [pid, PALETTE[i % PALETTE.length]]));
+    return new Map(ids.map((pid, i) => [pid, lighten(PALETTE[i % PALETTE.length], 0.35)]));
   }, [kg]);
 
   const adjacency = useMemo(() => {
@@ -97,15 +122,22 @@ export default function ConceptGraph3D() {
     return m;
   }, [kg, graphData]);
 
-  // Fit camera once per dataset after the layout has mostly settled.
+  // Early framing pass during layout, then the real fit on onEngineStop —
+  // the only deterministic signal that d3-force has finished expanding.
   useEffect(() => {
     if (!kg || !kg.nodes.length) return;
     const key = String(kg.nodes.length) + ":" + String(kg.edges.length);
-    if (fitDone.current === key) return;
     fitDone.current = key;
-    const t = window.setTimeout(() => fgRef.current?.zoomToFit(600, 120), 1800);
-    return () => window.clearTimeout(t);
+    const early = window.setTimeout(() => fitCamera(fgRef.current, 2.2, 600), 2200);
+    return () => window.clearTimeout(early);
   }, [kg]);
+  const fitOnEngineStop = () => {
+    if (!kg) return;
+    const key = String(kg.nodes.length) + ":" + String(kg.edges.length);
+    if (fitDone.current !== key) return;
+    fitDone.current = null; // fit exactly once per dataset
+    fitCamera(fgRef.current, 2.6, 800);
+  };
 
   const active = hlNodes.size > 0;
 
@@ -156,13 +188,13 @@ export default function ConceptGraph3D() {
         linkColor={(l) => {
           if (active) return hlLinks.has(l) ? "#e8eef4" : DIM;
           const pid = (l as FgLink).paper_id;
-          return (pid != null ? paperLinkColor.get(pid) : null) ?? "rgba(74,88,102,.75)";
+          return (pid != null ? paperLinkColor.get(pid) : null) ?? "rgba(130,150,170,.9)";
         }}
-        linkWidth={(l) => (active && hlLinks.has(l) ? 1.8 : 0.6)}
+        linkWidth={(l) => (active && hlLinks.has(l) ? 2.4 : 1.2)}
         linkDirectionalArrowLength={3.2}
         linkDirectionalArrowColor={(l) => {
           const pid = (l as FgLink).paper_id;
-          return (pid != null ? paperLinkColor.get(pid) : null) ?? "#4a5866";
+          return (pid != null ? paperLinkColor.get(pid) : null) ?? "#8296aa";
         }}
         linkDirectionalArrowRelPos={1}
         linkLabel={(l) => {
@@ -184,6 +216,7 @@ export default function ConceptGraph3D() {
           setHlLinks(adj ? adj.links : new Set());
         }}
         onNodeClick={(n) => showEntity((n as KgNode).id)}
+        onEngineStop={fitOnEngineStop}
       />
       {/* Opaque card below the view-toggle tabs: without a background the 3D
           nodes and labels render straight through the legend and it becomes unreadable. */}
