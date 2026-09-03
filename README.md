@@ -8,6 +8,8 @@ Agent（或你自己在 CLI）检索时先拿摘要卡和最匹配片段，需�
 top-k 片段注入）与 [LightRAG](https://github.com/HKUDS/LightRAG)（概念图双层检索）。
 检索管线：FTS5 + 向量 → RRF 融合 → Reranker 重排。
 
+![检索与详情面板](docs/img/04-detail.png)
+
 ## 特性一览
 
 - **入库管线**：PDF→Markdown（Datalab Marker 云端高保真 / PyMuPDF 本地免费双引擎）
@@ -147,6 +149,14 @@ python -m paper_manager.server --host 0.0.0.0  # 局域网/VPN 内其他设备�
 - 选中状态写入 URL（`?paper=5`），刷新与跨设备分享不丢；Esc 关闭面板；
 - 悬停节点自动高亮相邻关系（`focus: adjacency`）、标签自动防重叠（`hideOverlap`）。
 
+**时间轴视图**（横轴年份，引文簇分行，实线=引用方向、虚线=语义相似）：
+
+![时间轴视图](docs/img/01-timeline.png)
+
+**关系图视图**（力导向布局，拖拽/滚轮缩放）：
+
+![关系图视图](docs/img/02-forcegraph.png)
+
 ## 引文图
 
 引文数据来自 [OpenAlex](https://openalex.org)（免费无需 key），
@@ -188,6 +198,8 @@ python cli.py kg "graph rag 双层检索"   # 概念检索
 UI「概念图」视图：力导向实体网络，节点按类型着色（method/dataset/
 task/concept）、大小 = 关联章节块数，悬停高亮相邻关系，点击实体看描述、
 关系与相关论文并可跳转时间轴。
+
+![概念图视图](docs/img/03-conceptgraph.png)
 
 ## Roadmap
 
