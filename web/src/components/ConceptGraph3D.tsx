@@ -17,9 +17,16 @@ const KG_COLOR: Record<string, string> = {
 const KG_TYPES = ["method", "dataset", "task", "concept"];
 const DIM = "#2a3745";
 
-// radius derived from nodeVal with nodeRelSize=8 (volume-proportional spheres)
+// Compress the raw chunk counts so the hub entity (29+ chunks) doesn't dwarf
+// everything else: val in [1.25, 8.5] -> radius ratio ~1.9 instead of ~3.
+function nodeValOf(n: KgNode) {
+  return 1 + Math.min(n.n_chunks, 30) / 4;
+}
+// radius implied by nodeVal under three-forcegraph's volume mapping (relSize 7):
+// volume = nodeVal * relSize^3, r = relSize * cbrt(0.75 * nodeVal / PI)
+const REL_SIZE = 7;
 function radiusOf(n: KgNode) {
-  return Math.cbrt(((n.n_chunks + 1) * 8 * 0.75) / Math.PI);
+  return REL_SIZE * Math.cbrt((nodeValOf(n) * 0.75) / Math.PI);
 }
 
 export default function ConceptGraph3D() {
@@ -100,8 +107,8 @@ export default function ConceptGraph3D() {
         width={size.w}
         height={size.h}
         backgroundColor="#0f1419"
-        nodeVal={(n) => (n as KgNode).n_chunks + 1}
-        nodeRelSize={8}
+        nodeVal={(n) => nodeValOf(n as KgNode)}
+        nodeRelSize={REL_SIZE}
         nodeColor={(n) => {
           const node = n as KgNode;
           const base = KG_COLOR[node.type] || "#9aa7b5";

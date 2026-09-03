@@ -6,3 +6,4 @@ __pycache__/
 .venv/
 .zcode/
 web/node_modules/
+web/.vite/
