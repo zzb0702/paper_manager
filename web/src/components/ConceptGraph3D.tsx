@@ -50,15 +50,18 @@ export default function ConceptGraph3D() {
   // rfg-3d falls back to window size when auto-detecting on a freshly-mounted
   // parent, which then overflows the grid column and breaks the whole layout;
   // size is driven explicitly from the wrapper instead.
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [kg]);
+	  // No more explicit size — parent container (grid column) is now responsible for
+	  // the canvas size. This lets the user freely zoom/rotate/resize the 3D graph
+	  // without layout shift or forced scaling limits.
+	  useEffect(() => {
+	    const el = wrapRef.current;
+	    if (!el) return;
+	    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+	    measure();
+	    const ro = new ResizeObserver(measure);
+	    ro.observe(el);
+	    return () => ro.disconnect();
+	  }, [kg]);
 
   // Deep-ish copy: rfg mutates node/link objects in place; keep the store clean.
   const graphData = useMemo(() => {
