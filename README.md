@@ -19,8 +19,8 @@ top-k 片段注入）与 [LightRAG](https://github.com/HKUDS/LightRAG)（概念�
 - **MCP 服务**：4 个工具（stdio / HTTP 双模式），任何 MCP 客户端即插即用；
 - **引文图**：OpenAlex（免 key）+ Semantic Scholar 备用，库内引用关系自动连线；
 - **概念图**：LightRAG 式 LLM 实体/关系抽取 + "概念 → 章节证据"双层检索；
-- **可视化**：Gephi Lite 式三栏界面（时间轴 / 引文关系图 / 概念图），
-  单文件前端 + 本地 vendored ECharts，零构建步骤；
+- **可视化**：Gephi Lite 式三栏界面（时间轴 / 引文关系图 / 3D 概念图），
+  Vite + React + TypeScript 前端，构建产物已入库、clone 即用；
 - **评测防回退**：33 条标注用例跑在 10 篇确定性合成论文上，recall@5 / MRR / 延迟一键回归。
 
 ## 快速开始
@@ -137,17 +137,24 @@ python -m paper_manager.server                 # http://127.0.0.1:8830
 python -m paper_manager.server --host 0.0.0.0  # 局域网/VPN 内其他设备可访问
 ```
 
-前端为单文件 + 本地 vendored [ECharts](https://echarts.apache.org)（`static/echarts.min.js`，无 CDN 依赖、无构建步骤）。
+前端为 Vite + React + TypeScript 工程（`web/`，Tailwind 4 + [ECharts](https://echarts.apache.org) + react-force-graph-3d）。
+构建产物 `web/dist/` 已入库，由 FastAPI 直接挂载——clone 后不装 Node 也能一条命令启动。
+改前端才需要重新构建：
 
-- **三视图**：时间轴（横轴年份、引文簇分行）⇄ 引文关系图（力导向）⇄ 概念图，一键切换；
+```bash
+cd web && npm install && npm run build   # 产物输出到 web/dist/
+cd web && npm run dev                    # 开发模式（:5173，/api 代理到 :8830）
+```
+
+- **三视图**：时间轴（横轴年份、引文簇分行）⇄ 引文关系图（力导向）⇄ 3D 概念图，一键切换；
 - **关系编码**：实线箭头 = 引文（指向被引论文），虚线 = 语义相近（阈值可调），
   边粗细随相似度变化；节点大小按被引数/章节块数编码；
 - **左栏**：语义检索（两阶段混合检索）、元数据筛选（年份/作者/期刊，不匹配节点
-  变暗而非消失）、外观开关、聚类图例（点击单簇隔离）；
+  变暗而非消失）、外观开关、聚类图例（点击单簇隔离）、PDF 导入（双引擎）；
 - **详情面板**：摘要卡、可展开摘要、被引数徽章，三类可点击邻居（库内引用/被引/
-  语义相近），一键抓取引文、查看 Markdown（内置渲染弹窗）、打开原始 PDF；
-- 选中状态写入 URL（`?paper=5`），刷新与跨设备分享不丢；Esc 关闭面板；
-- 悬停节点自动高亮相邻关系（`focus: adjacency`）、标签自动防重叠（`hideOverlap`）。
+  语义相近），一键抓取引文、查看 Markdown（react-markdown 渲染弹窗）、打开原始 PDF；
+- 视图与选中状态写入 URL（`?view=kg&paper=5&entity=49`），刷新与跨设备分享不丢；Esc 关闭面板；
+- 论文视图悬停高亮相邻关系（`focus: adjacency`）、标签防重叠（`hideOverlap`）。
 
 **时间轴视图**（横轴年份，引文簇分行，实线=引用方向、虚线=语义相似）：
 
@@ -195,11 +202,11 @@ python cli.py kg "graph rag 双层检索"   # 概念检索
 命中率低——概念检索先命中实体、沿关系扩展一跳邻居、再回溯到讨论这些
 概念的章节，按论文聚合。命中卡与两阶段检索同构。
 
-UI「概念图」视图：力导向实体网络，节点按类型着色（method/dataset/
-task/concept）、大小 = 关联章节块数，悬停高亮相邻关系，点击实体看描述、
-关系与相关论文并可跳转时间轴。
+UI「概念图」视图：react-force-graph-3d 真 3D 实体网络（左键旋转 / 滚轮缩放 /
+右键平移），节点按类型着色（method/dataset/task/concept）、大小 = 关联章节块数，
+关系边带方向箭头；悬停高亮相邻子图，点击实体看描述、关系与相关论文并可跳转时间轴。
 
-![概念图视图](docs/img/03-conceptgraph.png)
+![3D 概念图视图](docs/img/03-conceptgraph.png)
 
 ## Roadmap
 

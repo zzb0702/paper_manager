@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+/* Dark theme tokens carried over from the legacy single-file UI. */
+@theme {
+  --color-bg: #0f1419;
+  --color-panel: #161d24;
+  --color-line: #232d38;
+  --color-ink: #d8e0e8;
+  --color-dim: #7b8a99;
+  --color-accent: #4f9cf9;
+  --color-amber: #f5a623;
+  --color-ok: #58c98b;
+  --color-err: #e4574f;
+  --color-field: #0b1015;
+  --color-raise: #1d2731;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg text-ink;
+  font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+@layer components {
+  .btn {
+    @apply cursor-pointer rounded-lg border border-line bg-raise px-3 py-1.5 text-[13px] text-ink hover:border-accent disabled:cursor-wait disabled:opacity-50;
+  }
+  .input {
+    @apply min-w-0 rounded-lg border border-line bg-field px-2.5 py-1.5 text-[13px] text-ink focus:border-accent focus:outline-none;
+  }
+  .sect-title {
+    @apply mb-2 text-xs uppercase tracking-wider text-accent;
+  }
+  .mini-label {
+    @apply my-1.5 block text-xs text-dim;
+  }
+  .chip {
+    @apply mb-1.5 mr-1.5 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line px-2.5 py-0.5 text-xs;
+  }
+  .chip-on {
+    @apply border-accent bg-raise;
+  }
+  .card {
+    @apply mb-1.5 cursor-pointer rounded-lg border border-line bg-field px-2.5 py-2 hover:border-accent;
+  }
+  .rel {
+    @apply cursor-pointer rounded-md px-2 py-1 text-xs hover:bg-raise;
+  }
+  .badge {
+    @apply mr-1 inline-block whitespace-nowrap rounded-md border border-line px-1.5 py-px text-[11px] text-dim;
+  }
+  .summary-box {
+    @apply my-2 rounded-lg border border-line bg-field p-2.5;
+  }
+}
+
+/* Markdown viewer typography (legacy #modalBody rules). */
+.md-body {
+  @apply text-[13px];
+}
+.md-body h1,
+.md-body h2,
+.md-body h3 {
+  @apply my-3 font-semibold;
+}
+.md-body h1 { font-size: 19px; }
+.md-body h2 { font-size: 16px; }
+.md-body h3 { font-size: 14px; }
+.md-body p {
+  @apply my-1.5;
+}
+.md-body ul {
+  @apply my-1.5 list-disc pl-6;
+}
+.md-body ol {
+  @apply my-1.5 list-decimal pl-6;
+}
+.md-body pre {
+  @apply my-2 overflow-x-auto rounded-md bg-field p-2;
+}
+.md-body code {
+  @apply rounded bg-field px-1 py-px;
+}
+.md-body table {
+  @apply my-2 border-collapse text-xs;
+}
+.md-body th,
+.md-body td {
+  @apply border border-line px-2 py-1;
+}
+.md-body a {
+  @apply text-accent underline;
+}

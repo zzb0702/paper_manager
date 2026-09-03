@@ -30,17 +30,10 @@ from .config import ROOT
 from .embedder import EmbeddingClient, RerankerClient
 
 app = FastAPI(title="Paper Manager")
-app.mount(
-    "/static", StaticFiles(directory=Path(ROOT) / "static"), name="static"
-)
+WEB_DIST = Path(ROOT) / "web" / "dist"
 
 _SIM_THRESHOLD = 0.55
 _SIM_TOP = 2
-
-
-@app.get("/")
-def index() -> FileResponse:
-    return FileResponse(Path(ROOT) / "static" / "index.html")
 
 
 @app.get("/api/status")
@@ -97,7 +90,7 @@ def graph(sim: float = _SIM_THRESHOLD) -> dict:
     conn = db.connect()
     try:
         rows = conn.execute(
-            "SELECT id, title, authors, year, summary, cited_by_count,"
+            "SELECT id, title, authors, year, venue, summary, cited_by_count,"
             " citations_fetched_at FROM papers ORDER BY year, id"
         ).fetchall()
         counts = db.chunk_counts(conn)
@@ -107,6 +100,7 @@ def graph(sim: float = _SIM_THRESHOLD) -> dict:
                 "title": r["title"],
                 "authors": r["authors"],
                 "year": r["year"],
+                "venue": r["venue"],
                 "summary": (r["summary"] or "")[:220],
                 "cited_by_count": r["cited_by_count"] or 0,
                 "n_chunks": counts.get(r["id"], 0),
@@ -278,6 +272,22 @@ def fetch_citations(paper_id: int) -> dict:
         raise HTTPException(500, f"{type(exc).__name__}: {exc}") from exc
     finally:
         conn.close()
+
+
+# SPA (web/dist, Vite build) is mounted LAST so /api/* routes above win.
+if WEB_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
+else:
+
+    @app.get("/")
+    def index_missing() -> JSONResponse:
+        return JSONResponse(
+            {
+                "detail": "前端未构建：cd web && npm install && npm run build"
+                "（或直接运行 FastAPI 的 /api/* 接口）"
+            },
+            status_code=500,
+        )
 
 
 def main() -> None:

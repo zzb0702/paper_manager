@@ -4,3 +4,5 @@ evals/library/
 __pycache__/
 *.pyc
 .venv/
+.zcode/
+web/node_modules/

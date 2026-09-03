@@ -488,16 +488,27 @@ def papers_without_kg(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def kg_graph(conn: sqlite3.Connection) -> dict[str, list]:
-    """Whole concept graph, compact, with per-entity chunk-link counts."""
+    """Whole concept graph, compact, with per-entity chunk-link counts.
+
+    paper_ids lists the library papers whose chunks mention the entity
+    (via kg_chunk_links → chunks), so the 3D view and entity panel can
+    cross-link concepts to papers without a second round trip.
+    """
     nodes = []
     counts = {}
-    for r in conn.execute("SELECT chunk_id, node_ids FROM kg_chunk_links"):
+    node_papers: dict[int, set[int]] = {}
+    for r in conn.execute(
+        "SELECT kcl.node_ids, c.paper_id FROM kg_chunk_links kcl"
+        " JOIN chunks c ON c.id = kcl.chunk_id"
+    ):
         for nid in json.loads(r["node_ids"]):
             counts[nid] = counts.get(nid, 0) + 1
+            node_papers.setdefault(nid, set()).add(r["paper_id"])
     for r in conn.execute("SELECT id, display, type, desc FROM kg_nodes"):
         nodes.append({
             "id": r["id"], "name": r["display"], "type": r["type"],
             "desc": r["desc"], "n_chunks": counts.get(r["id"], 0),
+            "paper_ids": sorted(node_papers.get(r["id"], ())),
         })
     edges = [
         {"src": r["src"], "dst": r["dst"], "relation": r["relation"]}
