@@ -511,8 +511,8 @@ def kg_graph(conn: sqlite3.Connection) -> dict[str, list]:
             "paper_ids": sorted(node_papers.get(r["id"], ())),
         })
     edges = [
-        {"src": r["src"], "dst": r["dst"], "relation": r["relation"]}
-        for r in conn.execute("SELECT src, dst, relation FROM kg_edges")
+        {"src": r["src"], "dst": r["dst"], "relation": r["relation"], "paper_id": r["paper_id"]}
+        for r in conn.execute("SELECT src, dst, relation, paper_id FROM kg_edges")
     ]
     return {"nodes": nodes, "edges": edges}
 

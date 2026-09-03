@@ -82,6 +82,7 @@ export interface KgEdge {
   src: number;
   dst: number;
   relation: string;
+  paper_id: number | null;
 }
 
 export interface KgData {

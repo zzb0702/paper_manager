@@ -1,13 +1,8 @@
 import * as echarts from "echarts";
 import { useEffect, useRef } from "react";
 import { useApp } from "../store";
+import { PALETTE } from "../palette";
 import type { Filters, GraphData, PaperNode, SizeMode } from "../types";
-
-const PALETTE = [
-  "#4f9cf9", "#f5a623", "#7dd87d", "#e46fb2", "#b07df9", "#5fd4d0",
-  "#f9e04f", "#f97b5f", "#9aa7b5", "#6bd66b", "#c98bf5", "#5fbef9",
-  "#f97b9c", "#8bf97b", "#f9d06b", "#6b8ef9",
-];
 
 const esc = (s: string | null | undefined) =>
   (s || "").replace(/[&<>"]/g, (c) =>

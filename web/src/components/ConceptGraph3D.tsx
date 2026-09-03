@@ -2,11 +2,17 @@ import ForceGraph3D, { type ForceGraphMethods, type NodeObject } from "react-for
 import { useEffect, useMemo, useRef, useState } from "react";
 import SpriteText from "three-spritetext";
 import { useApp } from "../store";
+import { PALETTE } from "../palette";
 import type { KgNode } from "../types";
 
 // Node payload after react-force-graph decorates it with x/y/z.
 type FgNode = KgNode & { x?: number; y?: number; z?: number };
-type FgLink = { source: number | FgNode; target: number | FgNode; relation: string };
+type FgLink = {
+  source: number | FgNode;
+  target: number | FgNode;
+  relation: string;
+  paper_id: number | null;
+};
 
 const KG_COLOR: Record<string, string> = {
   method: "#4f9cf9",
@@ -31,6 +37,7 @@ function radiusOf(n: KgNode) {
 
 export default function ConceptGraph3D() {
   const kg = useApp((s) => s.kg);
+  const byId = useApp((s) => s.byId);
   const showEntity = useApp((s) => s.showEntity);
   const selectedEntity = useApp((s) => s.selectedEntity);
   const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
@@ -58,8 +65,19 @@ export default function ConceptGraph3D() {
     if (!kg) return { nodes: [] as FgNode[], links: [] as FgLink[] };
     return {
       nodes: kg.nodes.map((n) => ({ ...n })),
-      links: kg.edges.map((e) => ({ source: e.src, target: e.dst, relation: e.relation })),
+      links: kg.edges.map((e) => ({
+        source: e.src, target: e.dst, relation: e.relation, paper_id: e.paper_id,
+      })),
     };
+  }, [kg]);
+
+  // Links are tinted by the library paper they were extracted from
+  // (kg_edges.paper_id) — one stable color per paper, sorted-id -> palette index.
+  const paperLinkColor = useMemo(() => {
+    const ids = [...new Set((kg?.edges || []).map((e) => e.paper_id).filter((p): p is number => p != null))].sort(
+      (a, b) => a - b,
+    );
+    return new Map(ids.map((pid, i) => [pid, PALETTE[i % PALETTE.length]]));
   }, [kg]);
 
   const adjacency = useMemo(() => {
@@ -132,14 +150,24 @@ export default function ConceptGraph3D() {
           return sprite;
         }}
         nodeThreeObjectExtend
-        linkColor={(l) =>
-          active && hlLinks.has(l) ? "#4f9cf9" : "rgba(74,88,102,.75)"
-        }
+        linkColor={(l) => {
+          if (active) return hlLinks.has(l) ? "#e8eef4" : DIM;
+          const pid = (l as FgLink).paper_id;
+          return (pid != null ? paperLinkColor.get(pid) : null) ?? "rgba(74,88,102,.75)";
+        }}
         linkWidth={(l) => (active && hlLinks.has(l) ? 1.8 : 0.6)}
         linkDirectionalArrowLength={3.2}
-        linkDirectionalArrowColor={() => "#4a5866"}
+        linkDirectionalArrowColor={(l) => {
+          const pid = (l as FgLink).paper_id;
+          return (pid != null ? paperLinkColor.get(pid) : null) ?? "#4a5866";
+        }}
         linkDirectionalArrowRelPos={1}
-        linkLabel={(l) => (l as FgLink).relation}
+        linkLabel={(l) => {
+          const fl = l as FgLink;
+          const p = fl.paper_id != null ? byId.get(fl.paper_id) : undefined;
+          const src = p ? ` · [${p.id}] ${p.title.slice(0, 40)}` : "";
+          return `<b>${fl.relation}</b>${src}`;
+        }}
         onNodeHover={(n) => {
           const node = n as KgNode | null;
           (document.body.style as unknown as { cursor?: string }).cursor = node ? "pointer" : "";
@@ -154,13 +182,25 @@ export default function ConceptGraph3D() {
         }}
         onNodeClick={(n) => showEntity((n as KgNode).id)}
       />
-      <div className="pointer-events-none absolute left-24 top-3 z-10 flex flex-col gap-1 text-xs text-ink">
+      <div className="pointer-events-none absolute left-24 top-3 z-10 flex max-w-[420px] flex-col gap-1 text-xs text-ink">
+        <span className="text-[10px] text-dim">节点 = 实体类型</span>
         {KG_TYPES.map((t) => (
           <span key={t} className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: KG_COLOR[t] }} />
             {t}
           </span>
         ))}
+        <span className="mt-1 text-[10px] text-dim">连线 = 来源论文（同篇论文抽出的关系同色）</span>
+        {[...paperLinkColor.entries()].map(([pid, color]) => {
+          const p = byId.get(pid);
+          const title = p ? `${p.title.slice(0, 32)}${p.title.length > 32 ? "…" : ""}` : `#${pid}`;
+          return (
+            <span key={pid} className="flex items-center gap-1.5">
+              <span className="inline-block h-[3px] w-4 rounded-sm" style={{ background: color }} />
+              [{pid}] {title}
+            </span>
+          );
+        })}
       </div>
     </div>
   );
