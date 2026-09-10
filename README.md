@@ -13,14 +13,14 @@ top-k 片段注入）与 [LightRAG](https://github.com/HKUDS/LightRAG)（概念�
 ## 特性一览
 
 - **入库管线**：PDF→Markdown（Datalab Marker 云端高保真 / PyMuPDF 本地免费双引擎）
-  → 元数据抽取（标题/作者/年份/DOI）→ LLM 摘要卡 → 章节感知切块 → bge-m3 向量；
+  → 元数据抽取（首页标题/作者/年份/DOI，PDF Info 截断时自动回退正文）→ LLM 摘要卡 → 章节感知切块 → bge-m3 向量；
 - **两阶段检索**：PaperQA2 风格"论文级召回 → 章节级聚合"，LLM 查询改写 + RRF + 重排；
 - **全链路降级**：无 Embedding → 纯 FTS5；无 LLM → 跳过摘要卡；断网/欠费时库依然可检索；
 - **MCP 服务**：7 个工具（stdio / HTTP 双模式），任何 MCP 客户端即插即用；
 - **Zotero 集成**：本机 zotero.sqlite 只读检索 → 一键导入精读库，无需另装 zotero-mcp；
 - **引文图**：OpenAlex（免 key）+ Semantic Scholar 备用，库内引用关系自动连线；
 - **概念图**：LightRAG 式 LLM 实体/关系抽取 + "概念 → 章节证据"双层检索；
-- **可视化**：Gephi Lite 式三栏界面（时间轴 / 引文关系图 / 3D 概念图），
+- **可视化**：Gephi Lite 式三栏界面（时间轴 / 引文关系图 / 2D 概念图），
   Vite + React + TypeScript 前端，构建产物已入库、clone 即用；
 - **评测防回退**：33 条标注用例跑在 10 篇确定性合成论文上，recall@5 / MRR / 延迟一键回归。
 
@@ -38,6 +38,9 @@ python cli.py ingest /path/to/notes.pdf --engine local   # 免费纯文本抽取
 python cli.py search "attention 机制的效率优化"
 python cli.py read 1 --section method
 python cli.py status
+
+# 从已存 Markdown 重抽标题/作者（不重切块；修「佚名」/截断标题）
+python cli.py refresh-meta
 ```
 
 ## 数据流
@@ -46,7 +49,7 @@ python cli.py status
 PDF ──convert──> Markdown(data/markdown/<sha>.md)
         datalab(默认): Marker 云端，高保真，按页计费，多 key 轮询
         local: PyMuPDF 文本抽取，插入 <!-- page:N --> 页码标记（免费）
-      ──> 元数据（标题/作者/年份/DOI 正则 + PDF meta）
+      ──> 元数据（首页多行标题 + 作者启发式；PDF Info 仅作补充）
       ──> LLM 摘要卡 3-5 句（papers.summary，可 --no-summary）
       ──> 章节感知切块（300-800 tokens，带 section/page 元数据）
       ──> bge-m3 嵌入（批量 16，失败自动降级为纯 FTS5）
@@ -159,7 +162,7 @@ python -m paper_manager.server                 # http://127.0.0.1:8830
 python -m paper_manager.server --host 0.0.0.0  # 局域网/VPN 内其他设备可访问
 ```
 
-前端为 Vite + React + TypeScript 工程（`web/`，Tailwind 4 + [ECharts](https://echarts.apache.org) + react-force-graph-3d）。
+前端为 Vite + React + TypeScript 工程（`web/`，Tailwind 4 + [ECharts](https://echarts.apache.org)）。
 构建产物 `web/dist/` 已入库，由 FastAPI 直接挂载——clone 后不装 Node 也能一条命令启动。
 改前端才需要重新构建：
 
@@ -168,7 +171,7 @@ cd web && npm install && npm run build   # 产物输出到 web/dist/
 cd web && npm run dev                    # 开发模式（:5173，/api 代理到 :8830）
 ```
 
-- **三视图**：时间轴（横轴年份、引文簇分行）⇄ 引文关系图（力导向）⇄ 3D 概念图，一键切换；
+- **三视图**：时间轴（横轴年份、引文簇分行）⇄ 引文关系图（力导向）⇄ 概念图（2D 力导向），一键切换；
 - **关系编码**：实线箭头 = 引文（指向被引论文），虚线 = 语义相近（阈值可调），
   边粗细随相似度变化；节点大小按被引数/章节块数编码；
 - **左栏**：语义检索（两阶段混合检索）、元数据筛选（年份/作者/期刊，不匹配节点
@@ -224,14 +227,12 @@ python cli.py kg "graph rag 双层检索"   # 概念检索
 命中率低——概念检索先命中实体、沿关系扩展一跳邻居、再回溯到讨论这些
 概念的章节，按论文聚合。命中卡与两阶段检索同构。
 
-UI「概念图」视图：react-force-graph-3d 真 3D 实体网络（左键旋转 / 滚轮缩放 /
-右键平移），节点按类型着色（method/dataset/task/concept）、大小 = 关联章节块数，
-连线按来源论文着色（同一篇论文抽出的关系同色，图例含论文列表）；高频实体常显名称
-标签，悬停高亮相邻子图并临时点亮邻居标签，点击实体看描述、关系与相关论文并可跳转
-时间轴。渲染做了降载优化（关闭 MSAA 抗锯齿、devicePixelRatio 封顶 1.5、低频实体
-不常驻标签、无箭头锥体），弱核显 / 高 DPI 缩放下缩放旋转依然流畅。
+UI「概念图」视图：ECharts 2D 力导向实体网络（拖拽平移 / 滚轮缩放），节点按类型着色
+（method/dataset/task/concept）、大小 = 关联章节块数，连线保持中性灰；支持实体搜索、
+类型开关、按来源论文过滤、隐藏次要实体。点击实体看描述、关系与相关论文。悬停高亮
+邻域，默认只常显较高频实体标签，避免 200+ 节点时标签重叠。
 
-![3D 概念图视图](docs/img/03-conceptgraph.png)
+![概念图视图](docs/img/03-conceptgraph.png)
 
 ## Roadmap
 

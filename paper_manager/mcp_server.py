@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 from . import db, retriever
 from .embedder import EmbeddingClient, RerankerClient
 from .ingest import ingest_pdf as _ingest_pdf
+from .util import format_authors
 
 mcp = FastMCP(
     "paper-manager",
@@ -151,7 +152,7 @@ def list_papers() -> str:
         lines = [f"共 {len(rows)} 篇：", ""]
         for r in rows:
             year = f" ({r['year']})" if r["year"] else ""
-            authors = (r["authors"] or "")[:40]
+            authors = format_authors(r["authors"])
             lines.append(f"[{r['id']}] {r['title']}{year} — {authors}")
         return "\n".join(lines)
     finally:

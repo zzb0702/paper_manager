@@ -1,5 +1,20 @@
 // Shapes mirror the FastAPI responses in paper_manager/server.py.
 
+/** Keep at most `max` authors for display; append 「等」 when truncated. */
+export function formatAuthors(
+  authors: string | null | undefined,
+  max = 3,
+): string {
+  if (!authors?.trim()) return "";
+  const parts = authors
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return "";
+  if (parts.length <= max) return parts.join("; ");
+  return `${parts.slice(0, max).join("; ")} 等`;
+}
+
 export interface PaperNode {
   id: number;
   title: string;

@@ -233,17 +233,265 @@ def convert_datalab(
 
 _TITLE_JUNK = re.compile(r"^(arxiv|doi|http|www\.|proceedings|preprint)", re.I)
 _PAGE_MARK = re.compile(r"<!--\s*page:\d+\s*-->")
+_ABSTRACT_HEAD = re.compile(
+    r"^(?:\d+\.?\s*)?(?:abstract|摘要|summary)\s*[:.]?\s*$"
+    r"|^(?:\d+\.?\s+)?introduction\b",
+    re.I,
+)
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
+_URL_RE = re.compile(r"https?://\S+", re.I)
+_AFFILIATION_RE = re.compile(
+    r"\b("
+    r"university|institute|department|laboratory|lab\b|college|school|"
+    r"research center|research centre|academy|center for|centre for|"
+    r"corporation|inc\.?\b|ltd\.?\b|"
+    r"microsoft|google|deepmind|openai|facebook|amazon\b|"
+    r"arxiv|eth zurich|tsinghua|peking university"
+    r")\b",
+    re.I,
+)
+# Affiliation superscripts glued to names: "Guo1,2" / "Edge1†" / "Wang†§" (commas stay)
+_AFFIX_MARK = re.compile(r"[\d†‡§*∗]+")
+# Function words that almost never appear in a bare author list
+_TITLE_STOP = {
+    "a", "an", "the", "and", "or", "for", "to", "of", "in", "on", "from",
+    "with", "via", "using", "towards", "toward", "over", "under",
+    "how", "what", "why", "when",
+}
+
+
+def _clean_line(s: str) -> str:
+    s = s.replace(" ", " ").replace("﻿", "")
+    s = _PAGE_MARK.sub("", s)
+    s = re.sub(r"^\s*page\s*\d+\s*$", "", s, flags=re.I)
+    return s.strip()
+
+
+def _strip_front_noise(lines: list[str]) -> list[str]:
+    out = list(lines)
+    while out:
+        s = out[0]
+        if (
+            not s
+            or s.isdigit()
+            or _TITLE_JUNK.match(s)
+            or s.lower().startswith("arxiv:")
+            or re.fullmatch(r"[\d\s\-.]+", s or "")
+        ):
+            out.pop(0)
+            continue
+        break
+    return out
+
+
+def _looks_like_person_token(token: str) -> bool:
+    t = token.strip().strip(".,;:")
+    if not t or len(t) < 2:
+        return False
+    if _AFFILIATION_RE.search(t) or _EMAIL_RE.search(t):
+        return False
+    if not re.match(r"^[A-ZÀ-Þ]", t):
+        return False
+    core = re.sub(r"[^A-Za-zÀ-ÿ]", "", t)
+    if not core:
+        return False
+    # ALL-CAPS acronyms (IBM, RAG, GPT) are not person tokens
+    if core.isupper() and len(core) >= 2:
+        return False
+    return True
+
+
+def _is_name_chunk(chunk: str) -> bool:
+    words = chunk.replace("-", " ").split()
+    if not (2 <= len(words) <= 4):
+        return False
+    if not all(_looks_like_person_token(w) for w in words):
+        return False
+    lower = {w.lower() for w in words}
+    return not (lower & _TITLE_STOP)
+
+
+def _has_affix_marker(s: str) -> bool:
+    return bool(re.search(r"[\d†‡*∗]", s))
+
+
+def _is_author_line(s: str) -> bool:
+    """Author list line: 2+ comma-separated names, or one name with affix markers."""
+    if not s or len(s) > 160:
+        return False
+    if _EMAIL_RE.search(s) or _URL_RE.search(s) or _AFFILIATION_RE.search(s):
+        return False
+    if _ABSTRACT_HEAD.match(s):
+        return False
+    if s.startswith("{") or s.startswith("†") or s.startswith("*"):
+        return False
+
+    cleaned = _AFFIX_MARK.sub(" ", s)
+    cleaned = re.sub(r"\s*,\s*", ", ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,;")
+    if not cleaned:
+        return False
+
+    chunks = [c.strip() for c in re.split(r"\s*[,;]\s*", cleaned) if c.strip()]
+    name_chunks = [c for c in chunks if _is_name_chunk(c)]
+
+    # Multi-author line: "Zirui Guo, Lianghao Xia, …"
+    if len(name_chunks) >= 2 and len(name_chunks) >= max(2, len(chunks) - 1):
+        return True
+
+    # Single person with superscript markers: "Darren Edge1†"
+    if len(chunks) == 1 and len(name_chunks) == 1 and _has_affix_marker(s):
+        return True
+
+    return False
+
+
+def _parse_name_chunk(chunk: str) -> str:
+    return re.sub(r"\s+", " ", chunk).strip(" ,;.")
+
+
+def _parse_author_line(s: str) -> list[str]:
+    cleaned = _AFFIX_MARK.sub(" ", s)
+    cleaned = re.sub(r"\s*,\s*", ", ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,;")
+    if not cleaned:
+        return []
+
+    # "Last, First; Last, First"
+    if ";" in cleaned:
+        out: list[str] = []
+        for part in cleaned.split(";"):
+            part = part.strip()
+            if not part:
+                continue
+            if "," in part:
+                last, first = part.split(",", 1)
+                name = f"{first.strip()} {last.strip()}".strip()
+            else:
+                name = part
+            if _is_name_chunk(name) or (
+                len(name.split()) >= 2 and _looks_like_person_token(name.split()[0])
+            ):
+                out.append(_parse_name_chunk(name))
+        return out
+
+    # "First Last, First Last, …"
+    if "," in cleaned:
+        names: list[str] = []
+        for part in cleaned.split(","):
+            name = _parse_name_chunk(part)
+            if name and (
+                _is_name_chunk(name)
+                or (
+                    len(name.split()) >= 2
+                    and _looks_like_person_token(name.split()[0])
+                )
+            ):
+                names.append(name)
+        if names:
+            return names
+
+    name = _parse_name_chunk(cleaned)
+    if _is_name_chunk(name):
+        return [name]
+    return []
+
+
+def extract_authors(front_text: str, meta: dict | None = None) -> str:
+    """Authors from PDF Info, else reconstructed from first-page text."""
+    meta_auth = ((meta or {}).get("author") or "").strip()
+    if meta_auth:
+        return meta_auth[:300]
+
+    lines = _strip_front_noise([_clean_line(x) for x in (front_text or "").splitlines()])
+    start = None
+    for i, line in enumerate(lines[:40]):
+        if _is_author_line(line):
+            start = i
+            break
+    if start is None:
+        return ""
+
+    names: list[str] = []
+    for line in lines[start : start + 40]:
+        if not line:
+            if names:
+                break
+            continue
+        if (
+            _EMAIL_RE.search(line)
+            or _AFFILIATION_RE.search(line)
+            or _ABSTRACT_HEAD.match(line)
+        ):
+            break
+        if line.startswith("{") or "†These" in line or line.startswith("†"):
+            break
+        batch = _parse_author_line(line)
+        if not batch:
+            if names:
+                break
+            continue
+        for n in batch:
+            if n not in names:
+                names.append(n)
+        if len(names) >= 30:
+            break
+    return "; ".join(names)[:300]
+
+
+def extract_title(front_text: str, meta: dict | None = None) -> str:
+    """Prefer a multi-line title from the first page over truncated PDF Info."""
+    lines = _strip_front_noise([_clean_line(x) for x in (front_text or "").splitlines()])
+
+    title_lines: list[str] = []
+    for line in lines[:25]:
+        if not line:
+            if title_lines:
+                break
+            continue
+        if _ABSTRACT_HEAD.match(line):
+            break
+        if _is_author_line(line) or _EMAIL_RE.search(line) or _AFFILIATION_RE.search(line):
+            break
+        # Affix markers on a short line => authors, not title
+        if _has_affix_marker(line) and len(line) < 80 and title_lines:
+            break
+        if len(title_lines) == 0 and len(line) > 180:
+            break
+        if len(title_lines) == 0 and (
+            line.lower().startswith("keywords")
+            or line.lower() == "keywords"
+            or _AFFILIATION_RE.match(line)
+        ):
+            break
+        if len(line) < 3:
+            continue
+        title_lines.append(line)
+        if len(title_lines) >= 4:
+            break
+
+    front_title = re.sub(r"\s+", " ", " ".join(title_lines)).strip(" -–—·")
+    meta_title = ((meta or {}).get("title") or "").strip()
+
+    if not front_title:
+        return meta_title[:200] or "untitled"
+    if not meta_title or len(meta_title) < 8:
+        return front_title[:200]
+
+    mt, ft = meta_title.lower(), front_title.lower()
+    # PDF Info titles on arXiv are often truncated mid-phrase
+    if ft.startswith(mt[: min(24, len(mt))]) or mt.startswith(ft[: min(24, len(ft))]):
+        return (front_title if len(front_title) >= len(meta_title) else meta_title)[:200]
+    if len(front_title) > len(meta_title) + 8:
+        return front_title[:200]
+    return meta_title[:200]
 
 
 def guess_title(markdown: str, meta: dict | None) -> str:
     meta_title = (meta or {}).get("title") or ""
     if meta_title.strip() and len(meta_title.strip()) > 6:
+        rebuilt = extract_title(markdown, meta)
+        if rebuilt and rebuilt != "untitled" and len(rebuilt) > len(meta_title.strip()) + 4:
+            return rebuilt[:200]
         return meta_title.strip()[:200]
-    for line in markdown.splitlines():
-        s = line.strip()
-        if s.startswith("<!--") or _PAGE_MARK.search(s):
-            continue  # page markers / html comments are not titles
-        s = s.lstrip("#").strip()
-        if len(s) >= 8 and not _TITLE_JUNK.match(s):
-            return s[:200]
-    return "untitled"
+    return extract_title(markdown, meta)

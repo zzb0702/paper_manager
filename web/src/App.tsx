@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import ConceptGraph3D from "./components/ConceptGraph3D";
+import ConceptGraph2D from "./components/ConceptGraph2D";
 import DetailPanel from "./components/DetailPanel";
 import Header from "./components/Header";
 import LeftPanel from "./components/LeftPanel";
@@ -68,7 +68,7 @@ export default function App() {
         <LeftPanel />
         <div className="relative min-w-0">
           <ViewToggle />
-          {viewMode === "kg" ? <ConceptGraph3D /> : <PaperGraph2D />}
+          {viewMode === "kg" ? <ConceptGraph2D /> : <PaperGraph2D />}
           {viewMode !== "kg" && graph.nodes.length === 0 && (
             <div className="pointer-events-none absolute inset-0 z-[4] flex flex-col items-center justify-center gap-3 text-dim">
               <div className="empty-orb" />

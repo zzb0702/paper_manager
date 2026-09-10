@@ -19,6 +19,7 @@ import sys
 from paper_manager import db, retriever
 from paper_manager.embedder import EmbeddingClient, RerankerClient
 from paper_manager.ingest import ingest_dir, ingest_pdf
+from paper_manager.util import format_authors
 
 _REWRITE_CACHE: dict[str, list[str] | None] = {}
 
@@ -204,7 +205,7 @@ def cmd_list(_: argparse.Namespace) -> None:
     try:
         for r in db.list_papers(conn):
             year = f" ({r['year']})" if r["year"] else ""
-            print(f"[{r['id']}] {r['title']}{year} — {(r['authors'] or '')[:60]}")
+            print(f"[{r['id']}] {r['title']}{year} — {format_authors(r['authors'])}")
     finally:
         conn.close()
 
@@ -233,6 +234,27 @@ def cmd_backfill(_: argparse.Namespace) -> None:
             "SELECT COUNT(*) c FROM paper_vectors"
         ).fetchone()["c"]
         print(f"补齐完成，论文向量共 {n_vec} 条")
+    finally:
+        conn.close()
+
+
+def cmd_refresh_meta(args: argparse.Namespace) -> None:
+    """Re-parse title/authors from stored markdown for weak/missing fields."""
+    from paper_manager.ingest import refresh_metadata
+
+    conn = db.connect()
+    try:
+        ids = [args.paper_id] if args.paper_id else None
+        reports = refresh_metadata(conn, ids, force=args.force)
+        for r in reports:
+            if r.get("status") == "updated":
+                print(f"[updated] #{r['paper_id']} {r['title'][:60]}")
+                if r.get("authors"):
+                    print(f"          authors: {r['authors'][:80]}")
+            else:
+                print(f"[{r.get('status')}] #{r['paper_id']} {r.get('title', '')[:60]}")
+        n = sum(1 for r in reports if r.get("status") == "updated")
+        print(f"完成：更新 {n} / 共 {len(reports)}")
     finally:
         conn.close()
 
@@ -320,6 +342,14 @@ def main() -> None:
 
     p = sub.add_parser("backfill", help="补齐存量论文的论文级索引（FTS+向量）")
     p.set_defaults(func=cmd_backfill)
+
+    p = sub.add_parser(
+        "refresh-meta",
+        help="从已存 Markdown 重抽标题/作者（补全 PDF 元数据缺失，不重切块）",
+    )
+    p.add_argument("paper_id", type=int, nargs="?", default=None, help="只处理指定论文")
+    p.add_argument("--force", action="store_true", help="即使已有作者/标题也覆盖")
+    p.set_defaults(func=cmd_refresh_meta)
 
     p = sub.add_parser("fetch-citations", help="从 Semantic Scholar 抓取引文关系")
     p.add_argument("paper_id", type=int, nargs="?", default=None)

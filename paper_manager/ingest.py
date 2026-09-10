@@ -10,7 +10,13 @@ from typing import Any
 from . import db
 from .chunker import chunk_markdown
 from .config import MD_DIR, ensure_dirs
-from .convert import convert_datalab, convert_local, guess_title
+from .convert import (
+    convert_datalab,
+    convert_local,
+    extract_authors,
+    extract_title,
+    guess_title,
+)
 from .embedder import EmbeddingClient
 from .llm import summarize_paper
 from .util import log
@@ -83,8 +89,8 @@ def ingest_pdf(
     front = conv["front_text"]
 
     log(f"[2/5] 提取元数据（{conv['page_count']} 页）")
-    title = guess_title(markdown, meta)
-    authors = (meta.get("author") or "")[:300]
+    title = extract_title(front, meta) or guess_title(markdown, meta)
+    authors = extract_authors(front, meta)
     year = db.extract_year(front, meta)
     doi = db.extract_doi(front)
     abstract = _extract_abstract(front)
@@ -169,3 +175,68 @@ def ingest_dir(
         reports.append(r)
         log(f"  -> {r.get('status')}: {p.name}")
     return reports
+
+
+def refresh_metadata(
+    conn: Any, paper_ids: list[int] | None = None, *, force: bool = False
+) -> list[dict[str, Any]]:
+    """Re-parse title/authors from stored markdown (no re-embed).
+
+    Only fills or extends weak fields unless force=True.
+    """
+    if paper_ids:
+        qmarks = ",".join("?" * len(paper_ids))
+        rows = conn.execute(
+            f"SELECT id, title, authors, md_path FROM papers "
+            f"WHERE id IN ({qmarks}) ORDER BY id",
+            paper_ids,
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, title, authors, md_path FROM papers ORDER BY id"
+        ).fetchall()
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        pid = row["id"]
+        old_title = (row["title"] or "").strip()
+        old_auth = (row["authors"] or "").strip()
+        md_path = row["md_path"] or ""
+        entry: dict[str, Any] = {"paper_id": pid, "title": old_title, "status": "skip"}
+
+        if not md_path or not Path(md_path).is_file():
+            entry["status"] = "no_markdown"
+            out.append(entry)
+            continue
+
+        front = Path(md_path).read_text(encoding="utf-8", errors="replace")[:4000]
+        new_title = extract_title(front, {})
+        new_auth = extract_authors(front, {})
+
+        title_changed = False
+        if new_title and new_title != "untitled":
+            if force or len(new_title) > len(old_title) + 4 or old_title in ("", "untitled"):
+                if new_title != old_title:
+                    db.set_title(conn, pid, new_title)
+                    entry["title"] = new_title
+                    title_changed = True
+
+        auth_changed = False
+        if new_auth and (force or not old_auth or len(new_auth) > len(old_auth)):
+            if new_auth != old_auth:
+                db.set_authors(conn, pid, new_auth)
+                entry["authors"] = new_auth
+                auth_changed = True
+
+        if title_changed or auth_changed:
+            # keep stage-1 FTS in sync with the new title/authors
+            paper = conn.execute("SELECT * FROM papers WHERE id = ?", (pid,)).fetchone()
+            abstract = paper["abstract"] or ""
+            summary = paper["summary"] or ""
+            index_text = " / ".join(
+                p for p in (paper["title"], paper["authors"], abstract, summary) if p
+            )
+            db.upsert_paper_fts(conn, pid, index_text)
+            entry["status"] = "updated"
+        out.append(entry)
+    return out

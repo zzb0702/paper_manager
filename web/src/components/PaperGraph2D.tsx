@@ -2,7 +2,13 @@ import * as echarts from "echarts";
 import { useEffect, useRef } from "react";
 import { useApp } from "../store";
 import { PALETTE } from "../palette";
-import type { Filters, GraphData, PaperNode, SizeMode } from "../types";
+import {
+  formatAuthors,
+  type Filters,
+  type GraphData,
+  type PaperNode,
+  type SizeMode,
+} from "../types";
 
 const esc = (s: string | null | undefined) =>
   (s || "").replace(/[&<>"]/g, (c) =>
@@ -194,7 +200,7 @@ export default function PaperGraph2D() {
               if (!n) return "";
               return (
                 `<b style="color:#e4ecf4">${esc(n.title)}</b><br><span style="color:#7c8c9c">` +
-                `${esc(n.authors) || "佚名"} · ${n.year || "?"} · 被引 ${n.cited_by_count || 0}` +
+                `${esc(formatAuthors(n.authors)) || "佚名"} · ${n.year || "?"} · 被引 ${n.cited_by_count || 0}` +
                 ` · ${n.n_chunks} 块</span>` +
                 (n.summary ? `<br><span style="color:#a8b6c4">${esc(n.summary.slice(0, 150))}…</span>` : "")
               );

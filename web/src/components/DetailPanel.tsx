@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useApp } from "../store";
-import type { EntityDetail, PaperDetail, RelatedItem } from "../types";
+import { formatAuthors, type EntityDetail, type PaperDetail, type RelatedItem } from "../types";
 
 function CloseBtn() {
   const closePanel = useApp((s) => s.closePanel);
@@ -114,7 +114,7 @@ function PaperPanel({ pid }: { pid: number }) {
           {detail.title}
         </h2>
         <div className="mb-1 text-xs leading-relaxed text-dim">
-          {detail.authors || "佚名"} · {detail.year || "?"}
+          {formatAuthors(detail.authors) || "佚名"} · {detail.year || "?"}
           {detail.doi && (
             <>
               {" · "}

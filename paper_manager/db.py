@@ -224,6 +224,16 @@ def upsert_paper_index(
     conn.commit()
 
 
+def upsert_paper_fts(conn: sqlite3.Connection, paper_id: int, text: str) -> None:
+    """Refresh papers_fts only — leaves paper_vectors untouched."""
+    conn.execute("DELETE FROM papers_fts WHERE rowid = ?", (paper_id,))
+    conn.execute(
+        "INSERT INTO papers_fts (rowid, content) VALUES (?, ?)",
+        (paper_id, text),
+    )
+    conn.commit()
+
+
 def delete_paper_index(conn: sqlite3.Connection, paper_id: int) -> None:
     conn.execute("DELETE FROM papers_fts WHERE rowid = ?", (paper_id,))
     conn.execute("DELETE FROM paper_vectors WHERE paper_id = ?", (paper_id,))
@@ -347,6 +357,13 @@ def set_authors(conn: sqlite3.Connection, paper_id: int, authors: str) -> None:
     """PDF 元数据缺作者时（arXiv LaTeX PDF 常见），用 OpenAlex/S2 回填。"""
     conn.execute(
         "UPDATE papers SET authors = ? WHERE id = ?", (authors[:300], paper_id)
+    )
+    conn.commit()
+
+
+def set_title(conn: sqlite3.Connection, paper_id: int, title: str) -> None:
+    conn.execute(
+        "UPDATE papers SET title = ? WHERE id = ?", (title[:200], paper_id)
     )
     conn.commit()
 
