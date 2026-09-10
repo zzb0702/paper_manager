@@ -223,6 +223,46 @@ def cmd_status(_: argparse.Namespace) -> None:
         conn.close()
 
 
+def cmd_overview(_: argparse.Namespace) -> None:
+    """Print library profile: direction topics, representative papers, gaps."""
+    from paper_manager.overview import overview_text
+
+    conn = db.connect()
+    try:
+        print(overview_text(conn))
+    finally:
+        conn.close()
+
+
+def cmd_annotate(args: argparse.Namespace) -> None:
+    """Write topics/notes onto one paper; refreshes stage-1 FTS."""
+    conn = db.connect()
+    try:
+        paper = db.get_paper(conn, args.paper_id)
+        if not paper:
+            print(f"paper_id={args.paper_id} 不存在")
+            sys.exit(1)
+        topics = []
+        if args.topics:
+            topics = [t for t in args.topics.replace("，", ",").split(",") if t.strip()]
+        notes = args.notes if args.notes is not None else None
+        if not topics and notes is None:
+            print(f"[{paper['id']}] {paper['title']}")
+            print(f"  topics: {paper['topics'] or '（无）'}")
+            print(f"  notes: {(paper['notes'] or '（无）')[:200]}")
+            return
+        saved = db.set_paper_topics(
+            conn, args.paper_id, topics, merge=not args.replace, notes=notes
+        )
+        fresh = db.get_paper(conn, args.paper_id)
+        print(f"[updated] #{args.paper_id} {(fresh or paper)['title'][:60]}")
+        print(f"  topics: {'; '.join(saved) or '（空）'}")
+        if fresh and fresh["notes"]:
+            print(f"  notes: {fresh['notes'][:200]}")
+    finally:
+        conn.close()
+
+
 def cmd_backfill(_: argparse.Namespace) -> None:
     """Build stage-1 paper index (FTS rows + paper vectors) for legacy rows."""
     from paper_manager.retriever import _backfill_paper_index
@@ -362,6 +402,30 @@ def main() -> None:
 
     p = sub.add_parser("status", help="库统计")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser(
+        "overview",
+        help="研究方向画像：主题、代表论文、数据缺口（给 Agent 用的一页纸）",
+    )
+    p.set_defaults(func=cmd_overview)
+
+    p = sub.add_parser(
+        "annotate",
+        help="给论文写主题标签/笔记（Agent 与 overview 可用）",
+    )
+    p.add_argument("paper_id", type=int)
+    p.add_argument(
+        "--topics",
+        default=None,
+        help='逗号分隔，如 "GraphRAG,方法对比,精读"；默认合并，--replace 覆盖',
+    )
+    p.add_argument("--notes", default=None, help="自由笔记（覆盖写入）")
+    p.add_argument(
+        "--replace",
+        action="store_true",
+        help="用 --topics 整体替换已有标签（默认追加合并）",
+    )
+    p.set_defaults(func=cmd_annotate)
 
     p = sub.add_parser("backfill", help="补齐存量论文的论文级索引（FTS+向量）")
     p.set_defaults(func=cmd_backfill)

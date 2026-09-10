@@ -1,8 +1,9 @@
 # Paper Manager — 本地论文库（PDF → Markdown → 混合检索 → MCP）
 
 导入论文 PDF，自动转成 Markdown、切块、向量化，并生成 3-5 句"摘要卡"。
-Agent（或你自己在 CLI）检索时先拿摘要卡和最匹配片段，需要时再深入读章节——
-**省 token** 是第一设计目标。
+**首要用户是 Agent（MCP）**：会话开场用 `library_overview` 了解你在做什么方向，
+再检索/精读/回写标签；人自己也可以用 CLI/Web 查库。
+检索时先拿摘要卡和最匹配片段，需要时再深入读章节——**省 token** 是第一设计目标。
 
 架构参考了 [PaperQA2](https://github.com/future-house/paper-qa)（引用对齐、
 top-k 片段注入）与 [LightRAG](https://github.com/HKUDS/LightRAG)（概念图双层检索）。
@@ -16,12 +17,14 @@ top-k 片段注入）与 [LightRAG](https://github.com/HKUDS/LightRAG)（概念�
   → 元数据抽取（首页标题/作者/年份/DOI，PDF Info 截断时自动回退正文）→ LLM 摘要卡 → 章节感知切块 → bge-m3 向量；
 - **两阶段检索**：PaperQA2 风格"论文级召回 → 章节级聚合"，LLM 查询改写 + RRF + 重排；
 - **全链路降级**：无 Embedding → 纯 FTS5；无 LLM → 跳过摘要卡；断网/欠费时库依然可检索；
-- **MCP 服务**：7 个工具（stdio / HTTP 双模式），任何 MCP 客户端即插即用；
+- **MCP 服务**：10 个工具（stdio / HTTP 双模式），任何 MCP 客户端即插即用；
+  会话开始先 `library_overview` 拿研究方向画像，可用 `annotate_paper` 打标签；
 - **Zotero 集成**：本机 zotero.sqlite 只读检索 → 一键导入精读库，无需另装 zotero-mcp；
 - **引文图**：OpenAlex（免 key）+ Semantic Scholar 备用，库内引用关系自动连线；
 - **概念图**：LightRAG 式 LLM 实体/关系抽取 + "概念 → 章节证据"双层检索；
 - **可视化**：Gephi Lite 式三栏界面（时间轴 / 引文关系图 / 2D 概念图），
   Vite + React + TypeScript 前端，构建产物已入库、clone 即用；
+- **Agent 研究画像**：`library_overview` 聚合主题/代表论文/缺口；`annotate_paper` 写标签与笔记并进检索；
 - **评测防回退**：33 条标注用例跑在 10 篇确定性合成论文上，recall@5 / MRR / 延迟一键回归。
 
 ## 快速开始
@@ -44,6 +47,12 @@ python cli.py refresh-meta
 
 # 补齐缺失作者（OpenAlex/S2）与摘要卡（LLM）；--force 连已有字段也重拉
 python cli.py enrich
+
+# 研究方向画像：主题词、代表论文、数据缺口（Agent 会话开场用）
+python cli.py overview
+
+# 给论文打主题标签/笔记（合并写入；--replace 整体替换；--notes "" 可清空笔记）
+python cli.py annotate 6 --topics "GraphRAG,方法对比,精读" --notes "全局摘要主文"
 ```
 
 ## 数据流
@@ -91,6 +100,26 @@ DATALAB_API_KEYS=key1,key2,key3
 - 阶段一为空或无论文向量时自动降级为全局章节检索；所有外部服务失败均静默降级到 FTS5；
 - 库内日志全部走 stderr，MCP stdio 协议不受 print 污染。
 
+### Agent 研究方向画像（overview + annotate）
+
+定位：**给 Agent 管理的本地论文库**，不是聊天问答产品。
+
+```text
+library_overview()     # 规模 / 方向判断 / 代表论文 / 数据缺口（无 LLM）
+        ↓
+search_papers / list_papers   # 命中卡带 #主题标签
+        ↓
+read_paper_section(paper_id, section)
+        ↓
+annotate_paper(paper_id, topics=[...], notes="…")   # 读完回写，刷新 FTS
+```
+
+- **方向判断优先级**：人工/Agent 标注 `topics` → 概念图实体 → 标题/摘要高频词；
+- **topics**：`;` 分隔存储，默认合并写入，`replace_topics` / `--replace` 整体覆盖；
+- **notes**：自由笔记，供后续会话回忆；
+- 标签会进入 `papers_fts`，`search_papers` 可按标签词召回；
+- CLI：`python cli.py overview` / `annotate`；HTTP：`GET /api/overview`、`POST /api/annotate/{id}`。
+
 ## MCP 接入（给 agent 用）
 
 stdio 方式，在客户端的 `.mcp.json` 加（`command` 用你的 Python 解释器绝对路径，
@@ -104,14 +133,17 @@ stdio 方式，在客户端的 `.mcp.json` 加（`command` 用你的 Python 解�
 }
 ```
 
-暴露 4 个工具（均按 token 预算设计返回体）：
+暴露 10 个工具（均按 token 预算设计返回体）：
 
 | 工具 | 作用 |
 |------|------|
+| `library_overview()` | **会话开场先调**：研究方向、代表论文、数据缺口（无 LLM，纯本地聚合） |
+| `annotate_paper(paper_id, topics?, notes?, replace_topics?)` | 写主题标签/笔记，默认合并；写入后刷新论文级 FTS |
 | `search_papers(query, top_k, year_min?, year_max?, author?, venue?)` | 两阶段检索（论文级召回→章节级聚合），摘要级命中卡，可叠加元数据过滤 |
 | `read_paper_section(paper_id, section)` | 深入读某章节，默认 6000 字符截断 |
-| `list_papers()` | 库清单 |
+| `list_papers()` | 库清单（含主题标签与短摘要） |
 | `ingest_pdf(path, engine)` | 导入新 PDF |
+| `search_graph(query, top_k)` | 概念图检索（实体→邻域→证据章节） |
 | `search_zotero(query, limit)` | 在本机 Zotero 藏书里按标题/作者/DOI 搜索并解析本地 PDF 路径 |
 | `get_zotero_item(key)` | 查看单条 Zotero 元数据与附件路径 |
 | `ingest_from_zotero(key, engine)` | 从 Zotero 条目导入 PDF 到精读库（幂等） |
@@ -121,9 +153,11 @@ stdio 方式，在客户端的 `.mcp.json` 加（`command` 用你的 Python 解�
 同一 MCP 里即可完成「Zotero 找文献 → 入库 → 章节深读」：
 
 ```text
-1. search_zotero("GraphRAG")
-2. ingest_from_zotero("<item_key>", engine="local")
-3. search_papers("双层检索") / read_paper_section(paper_id, "method")
+1. library_overview()
+2. [可选] annotate_paper(paper_id, topics=["方法对比"])
+3. search_zotero("GraphRAG")
+4. ingest_from_zotero("<item_key>", engine="local")
+5. search_papers("双层检索") / read_paper_section(paper_id, "method")
 ```
 
 要求本机 Zotero 数据目录可读（默认 `~/Zotero`）；特殊路径用

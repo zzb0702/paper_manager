@@ -27,8 +27,10 @@ mcp = FastMCP(
     "paper-manager",
     instructions=(
         "本地论文库：PDF 导入后转为 Markdown 并建立混合检索"
-        "（FTS5 + 向量 + 重排）。先用 search_papers 广度查找，"
-        "再用 read_paper_section 深入阅读，节省 token。"
+        "（FTS5 + 向量 + 重排）。会话开始先调 library_overview "
+        "了解研究方向与库存；再用 search_papers 广度查找，"
+        "最后用 read_paper_section 深入阅读，节省 token。"
+        "可用 annotate_paper 为论文打主题标签/笔记，便于后续检索。"
         "可选 Zotero 集成：search_zotero 找本地文献 → ingest_from_zotero "
         "导入精读索引，无需再单独安装 zotero-mcp。"
     ),
@@ -61,6 +63,78 @@ def _rewriter() -> retriever.QueryRewriter | None:
 
 
 @mcp.tool()
+def library_overview() -> str:
+    """查看本地论文库画像：规模、研究方向、代表论文、数据缺口。
+
+    会话开始或不确定库里有什么时先调用本工具。无需 LLM，纯本地聚合：
+    人工/Agent 标注标签（优先）→ 概念图实体 → 标题/摘要高频词。
+    返回 Markdown 概览，含建议 paper_id，便于后续 search_papers /
+    read_paper_section / annotate_paper。
+    """
+    from .overview import overview_text
+
+    conn = db.connect()
+    try:
+        if conn.execute("SELECT COUNT(*) c FROM papers").fetchone()["c"] == 0:
+            return (
+                "论文库为空。\n"
+                "用 ingest_pdf 导入 PDF，或 ingest_from_zotero 从 Zotero 拉取。"
+            )
+        return overview_text(conn)
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def annotate_paper(
+    paper_id: int,
+    topics: list[str] | None = None,
+    notes: str = "",
+    replace_topics: bool = False,
+) -> str:
+    """给论文写入主题标签（topics）与可选笔记（notes），供检索与 overview 使用。
+
+    默认 merge：在已有标签上追加去重。replace_topics=True 时整表覆盖 topics。
+    notes 传入则覆盖笔记（空字符串可清空）。写入后自动刷新论文级 FTS。
+
+    Args:
+        paper_id: 论文编号。
+        topics: 主题标签列表，如 ["GraphRAG", "方法对比", "精读"]。
+        notes: 自由笔记（可选），供后续 Agent 回忆。
+        replace_topics: True 时用 topics 整体替换已有标签（默认 False=合并）。
+    """
+    conn = db.connect()
+    try:
+        paper = db.get_paper(conn, paper_id)
+        if not paper:
+            return f"paper_id={paper_id} 不存在"
+        topic_list = topics or []
+        notes_arg = notes if notes else None
+        # allow notes-only updates
+        if not topic_list and notes_arg is None:
+            return (
+                f"[{paper_id}] {paper['title']}\n"
+                f"当前 topics: {paper['topics'] or '（无）'}\n"
+                f"当前 notes: {(paper['notes'] or '（无）')[:200]}"
+            )
+        saved = db.set_paper_topics(
+            conn,
+            paper_id,
+            topic_list,
+            merge=not replace_topics,
+            notes=notes_arg,
+        )
+        fresh = db.get_paper(conn, paper_id)
+        return (
+            f"已更新 [{paper_id}] {fresh['title'] if fresh else paper['title']}\n"
+            f"topics: {'; '.join(saved) or '（空）'}\n"
+            f"notes: {((fresh['notes'] if fresh else notes) or '（空）')[:200]}"
+        )
+    finally:
+        conn.close()
+
+
+@mcp.tool()
 def search_papers(
     query: str,
     top_k: int = 5,
@@ -74,7 +148,7 @@ def search_papers(
     检索为两阶段：先在论文级（摘要卡+摘要向量）召回候选论文，
     再在候选论文的章节块内做混合检索与聚合排序；问题会先由 LLM
     改写成 2-3 组中英文检索关键词以提升召回。返回摘要级命中卡片
-    （标题、年份、摘要、最匹配片段及章节页码、相关段落计数）。
+    （标题、年份、主题标签、摘要、最匹配片段及章节页码、相关段落计数）。
 
     Args:
         query: 检索问题或关键词（中英文均可）。
@@ -143,17 +217,26 @@ def read_paper_section(
 
 @mcp.tool()
 def list_papers() -> str:
-    """列出库中所有论文（编号、标题、作者、年份）。"""
+    """列出库中所有论文（编号、标题、作者、年份、主题标签）。
+
+    适合快速扫库存；方向画像请用 library_overview。
+    """
     conn = db.connect()
     try:
-        rows = db.list_papers(conn)
+        rows = conn.execute(
+            "SELECT id, title, authors, year, topics, summary FROM papers ORDER BY id"
+        ).fetchall()
         if not rows:
             return "论文库为空。用 ingest_pdf 导入 PDF。"
         lines = [f"共 {len(rows)} 篇：", ""]
         for r in rows:
             year = f" ({r['year']})" if r["year"] else ""
             authors = format_authors(r["authors"])
-            lines.append(f"[{r['id']}] {r['title']}{year} — {authors}")
+            tags = f"  #{r['topics']}" if r["topics"] else ""
+            lines.append(f"[{r['id']}] {r['title']}{year}{tags} — {authors}")
+            summary = (r["summary"] or "").strip()
+            if summary:
+                lines.append(f"  {summary[:160]}")
         return "\n".join(lines)
     finally:
         conn.close()

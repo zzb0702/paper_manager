@@ -65,6 +65,53 @@ def status() -> dict:
         conn.close()
 
 
+@app.get("/api/overview")
+def overview() -> dict:
+    """Library profile for agents / UI: topics, representatives, gaps."""
+    from .overview import build_overview
+
+    conn = db.connect()
+    try:
+        return build_overview(conn)
+    finally:
+        conn.close()
+
+
+@app.post("/api/annotate/{paper_id}")
+def annotate(
+    paper_id: int,
+    topics: str = Form(""),
+    notes: str | None = Form(None),
+    replace: bool = Form(False),
+) -> dict:
+    """Write topics/notes onto a paper (semicolon/comma separated topics)."""
+    conn = db.connect()
+    try:
+        paper = db.get_paper(conn, paper_id)
+        if not paper:
+            raise HTTPException(404, "paper not found")
+        topic_list = [
+            t for t in topics.replace("，", ",").replace(";", ",").split(",")
+            if t.strip()
+        ]
+        saved = db.set_paper_topics(
+            conn,
+            paper_id,
+            topic_list,
+            merge=not replace,
+            notes=notes if notes is not None else None,
+        )
+        fresh = db.get_paper(conn, paper_id)
+        return {
+            "paper_id": paper_id,
+            "title": fresh["title"] if fresh else paper["title"],
+            "topics": saved,
+            "notes": (fresh["notes"] if fresh else "") or "",
+        }
+    finally:
+        conn.close()
+
+
 @app.get("/api/papers")
 def papers() -> list[dict]:
     conn = db.connect()

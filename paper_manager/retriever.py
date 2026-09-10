@@ -250,6 +250,7 @@ def _hit_card(row: sqlite3.Row, score: float, matched: int) -> dict[str, Any]:
         "title": row["title"],
         "year": row["year"],
         "summary": (row["paper_summary"] or "")[:500],
+        "topics": row["topics"] or "",
         "chunk_id": row["id"],
         "section": row["section"],
         "pages": pages,
@@ -535,7 +536,8 @@ def format_hits(hits: list[dict[str, Any]]) -> str:
     lines = [f"找到 {len(hits)} 篇相关论文：", ""]
     for h in hits:
         year = f" ({h['year']})" if h["year"] else ""
-        lines.append(f"## [{h['paper_id']}] {h['title']}{year}")
+        tags = f"  #{h['topics']}" if h.get("topics") else ""
+        lines.append(f"## [{h['paper_id']}] {h['title']}{year}{tags}")
         if h["summary"]:
             lines.append(f"摘要卡：{h['summary']}")
         cite = h["section"] + (f"，第 {h['pages']} 页" if h["pages"] else "")

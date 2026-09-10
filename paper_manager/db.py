@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS papers(
   md_path TEXT DEFAULT '',
   sha256 TEXT NOT NULL UNIQUE,
   engine TEXT DEFAULT '',
+  topics TEXT DEFAULT '',          -- user/agent tags, ';'-separated
+  notes TEXT DEFAULT '',           -- freeform agent/human notes
   added_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -120,6 +122,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE papers ADD COLUMN cited_by_count INTEGER")
     if "kg_built_at" not in cols:
         conn.execute("ALTER TABLE papers ADD COLUMN kg_built_at TEXT")
+    if "topics" not in cols:
+        conn.execute("ALTER TABLE papers ADD COLUMN topics TEXT DEFAULT ''")
+    if "notes" not in cols:
+        conn.execute("ALTER TABLE papers ADD COLUMN notes TEXT DEFAULT ''")
     conn.commit()
 
 
@@ -145,7 +151,7 @@ def insert_paper(
 ) -> int:
     allowed = {
         "authors", "year", "venue", "doi", "abstract", "summary",
-        "pdf_path", "md_path", "engine",
+        "pdf_path", "md_path", "engine", "topics", "notes",
     }
     cols = ["title", "sha256"] + [c for c in fields if c in allowed]
     vals = [title, sha256] + [fields[c] for c in cols[2:]]
@@ -258,7 +264,8 @@ def papers_missing_fts(conn: sqlite3.Connection) -> list[int]:
 
 def papers_missing_vectors(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT p.id, p.title, p.authors, p.abstract, p.summary FROM papers p "
+        "SELECT p.id, p.title, p.authors, p.topics, p.abstract, p.summary "
+        "FROM papers p "
         "LEFT JOIN paper_vectors v ON v.paper_id = p.id WHERE v.paper_id IS NULL"
     ).fetchall()
 
@@ -269,8 +276,83 @@ def paper_index_text(row: sqlite3.Row) -> str:
     parts = [row["title"]]
     if "authors" in keys:
         parts.append(row["authors"] or "")
+    if "topics" in keys:
+        parts.append(row["topics"] or "")
     parts.extend([row["abstract"], row["summary"]])
     return " / ".join(p or "" for p in parts).strip(" /")
+
+
+def normalize_topics(raw: str | list[str] | None) -> str:
+    """Canonical topics storage: ';'-separated, unique, capped."""
+    if raw is None:
+        items: list[str] = []
+    elif isinstance(raw, str):
+        items = re.split(r"[;,;，、|]+", raw)
+    else:
+        items = [str(x) for x in raw]
+    out: list[str] = []
+    seen: set[str] = set()
+    for it in items:
+        t = re.sub(r"\s+", " ", it).strip()[:48]
+        if not t:
+            continue
+        key = t.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(t)
+        if len(out) >= 24:
+            break
+    return "; ".join(out)
+
+
+def parse_topics(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [t.strip() for t in raw.split(";") if t.strip()]
+
+
+def set_paper_topics(
+    conn: sqlite3.Connection,
+    paper_id: int,
+    topics: str | list[str],
+    *,
+    merge: bool = True,
+    notes: str | None = None,
+) -> list[str]:
+    """Write topics (and optional notes); rebuild papers_fts when changed."""
+    row = get_paper(conn, paper_id)
+    if row is None:
+        raise ValueError(f"paper_id={paper_id} 不存在")
+    existing = parse_topics(row["topics"])
+    if merge:
+        wanted = normalize_topics([*existing, *(
+            topics if not isinstance(topics, str)
+            else re.split(r"[;,;，、|]+", topics)
+        )])
+    else:
+        wanted = normalize_topics(topics)
+    new_notes = row["notes"] if notes is None else (notes or "").strip()[:2000]
+
+    changed = wanted != (row["topics"] or "") or new_notes != (row["notes"] or "")
+    if changed:
+        conn.execute(
+            "UPDATE papers SET topics = ?, notes = ? WHERE id = ?",
+            (wanted, new_notes, paper_id),
+        )
+        conn.commit()
+        # keep stage-1 FTS aligned with new tags
+        fresh = get_paper(conn, paper_id)
+        if fresh:
+            upsert_paper_fts(conn, paper_id, paper_index_text(fresh))
+    return parse_topics(wanted)
+
+
+def papers_with_topics(conn: sqlite3.Connection) -> dict[int, list[str]]:
+    rows = conn.execute(
+        "SELECT id, topics FROM papers WHERE topics IS NOT NULL AND TRIM(topics) != ''"
+    ).fetchall()
+    return {r["id"]: parse_topics(r["topics"]) for r in rows}
 
 
 def search_papers_fts(
@@ -654,7 +736,7 @@ def chunks_by_ids(conn: sqlite3.Connection, ids: list[int]) -> list[sqlite3.Row]
         return []
     marks = ",".join("?" * len(ids))
     rows = conn.execute(
-        f"SELECT c.*, p.title, p.year, p.summary AS paper_summary "
+        f"SELECT c.*, p.title, p.year, p.summary AS paper_summary, p.topics "
         f"FROM chunks c JOIN papers p ON p.id = c.paper_id "
         f"WHERE c.id IN ({marks})",
         ids,
