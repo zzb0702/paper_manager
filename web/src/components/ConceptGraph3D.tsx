@@ -15,9 +15,9 @@ type FgLink = {
 };
 
 const KG_COLOR: Record<string, string> = {
-  method: "#4f9cf9",
-  dataset: "#7dd87d",
-  task: "#f5a623",
+  method: "#5b9dff",
+  dataset: "#3ecf8e",
+  task: "#f0b429",
   concept: "#b07df9",
 };
 const KG_TYPES = ["method", "dataset", "task", "concept"];

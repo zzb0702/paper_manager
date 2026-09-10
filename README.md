@@ -105,6 +105,27 @@ stdio 方式，在客户端的 `.mcp.json` 加（`command` 用你的 Python 解�
 | `read_paper_section(paper_id, section)` | 深入读某章节，默认 6000 字符截断 |
 | `list_papers()` | 库清单 |
 | `ingest_pdf(path, engine)` | 导入新 PDF |
+| `search_zotero(query, limit)` | 在本机 Zotero 藏书里按标题/作者/DOI 搜索并解析本地 PDF 路径 |
+| `get_zotero_item(key)` | 查看单条 Zotero 元数据与附件路径 |
+| `ingest_from_zotero(key, engine)` | 从 Zotero 条目导入 PDF 到精读库（幂等） |
+
+### Zotero 一站式精读（无需再装 zotero-mcp）
+
+同一 MCP 里即可完成「Zotero 找文献 → 入库 → 章节深读」：
+
+```text
+1. search_zotero("GraphRAG")
+2. ingest_from_zotero("<item_key>", engine="local")
+3. search_papers("双层检索") / read_paper_section(paper_id, "method")
+```
+
+要求本机 Zotero 数据目录可读（默认 `~/Zotero`）；特殊路径用
+`ZOTERO_DB_PATH` 指向 `zotero.sqlite`。CLI 等价命令：
+
+```bash
+python cli.py zotero-search "GraphRAG"
+python cli.py zotero-ingest <ITEM_KEY> --engine local
+```
 
 HTTP 方式：`python -m paper_manager.mcp_server --http`（127.0.0.1:8820/mcp）。
 

@@ -172,7 +172,7 @@ export default function PaperGraph2D() {
           kind: e.kind,
           weight: e.weight || 0,
           lineStyle: {
-            color: sim ? "#4a5866" : "#f5a623",
+            color: sim ? "#4a5866" : "#f0b429",
             width: sim ? 1 + ((e.weight || 0.55) - 0.55) * 8 : 1.6,
             type: sim ? "dashed" : "solid",
             opacity: 0.6,
@@ -193,17 +193,17 @@ export default function PaperGraph2D() {
               const n = useApp.getState().byId.get(Number((p.data as { id?: string }).id));
               if (!n) return "";
               return (
-                `<b>${esc(n.title)}</b><br><span style="color:#7b8a99">` +
+                `<b style="color:#e4ecf4">${esc(n.title)}</b><br><span style="color:#7c8c9c">` +
                 `${esc(n.authors) || "佚名"} · ${n.year || "?"} · 被引 ${n.cited_by_count || 0}` +
                 ` · ${n.n_chunks} 块</span>` +
-                (n.summary ? `<br>${esc(n.summary.slice(0, 150))}…` : "")
+                (n.summary ? `<br><span style="color:#a8b6c4">${esc(n.summary.slice(0, 150))}…</span>` : "")
               );
             }
             if (p.dataType === "edge") {
               const dd = p.data as { kind?: string; weight?: number };
               const kind =
                 dd.kind === "citation" ? "引文关系" : `语义相似 ${dd.weight ?? ""}`;
-              return `<span style="color:#7b8a99">${kind}</span>`;
+              return `<span style="color:#7c8c9c">${kind}</span>`;
             }
             return "";
           },
@@ -216,17 +216,17 @@ export default function PaperGraph2D() {
             data: nodes,
             links,
             categories,
-            label: { show: true, position: "bottom", fontSize: 11, color: "#aeb9c4" },
+            label: { show: true, position: "bottom", fontSize: 11, color: "#b4c0cc" },
             labelLayout: { hideOverlap: true },
             emphasis: { focus: "adjacency", lineStyle: { width: 3 } },
             blur: { itemStyle: { opacity: 0.1 }, lineStyle: { opacity: 0.04 } },
             selectedMode: "single",
             select: {
               itemStyle: {
-                borderColor: "#fff",
+                borderColor: "#e4ecf4",
                 borderWidth: 2,
-                shadowBlur: 14,
-                shadowColor: "rgba(79,156,249,.8)",
+                shadowBlur: 16,
+                shadowColor: "rgba(91,157,255,.85)",
               },
             },
             force: { repulsion: 420, edgeLength: [60, 160], gravity: 0.12 },

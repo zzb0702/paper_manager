@@ -237,6 +237,49 @@ def cmd_backfill(_: argparse.Namespace) -> None:
         conn.close()
 
 
+def cmd_zotero_search(args: argparse.Namespace) -> None:
+    from paper_manager import zotero
+
+    st = zotero.status()
+    if not st.get("ok"):
+        print(st.get("error") or st.get("hint") or "Zotero 不可用")
+        sys.exit(1)
+    items = zotero.search(args.query, limit=args.limit)
+    if not items:
+        print(f"未找到: {args.query}")
+        return
+    for it in items:
+        year = f" ({it['year']})" if it.get("year") else ""
+        print(f"[{it['key']}] {it['title']}{year}")
+        if it.get("authors"):
+            print(f"  {it['authors'][:80]}")
+        paths = it.get("pdf_paths") or []
+        print(f"  PDF: {paths[0] if paths else '—'}")
+        print()
+
+
+def cmd_zotero_ingest(args: argparse.Namespace) -> None:
+    from paper_manager import zotero
+    from paper_manager.ingest import ingest_pdf
+
+    item = zotero.get_item(args.key)
+    if "error" in item:
+        print(item["error"])
+        sys.exit(1)
+    paths = item.get("pdf_paths") or []
+    if not paths:
+        print(f"[{item['key']}] 无本地 PDF: {item['title'][:60]}")
+        sys.exit(1)
+    report = ingest_pdf(
+        paths[0],
+        engine=args.engine,
+        force=args.force,
+        embedder=EmbeddingClient.from_env(),
+        make_summary=not args.no_summary,
+    )
+    print(report)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="本地论文管理器")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -297,6 +340,18 @@ def main() -> None:
     p.add_argument("query")
     p.add_argument("-k", "--top-k", type=int, default=5)
     p.set_defaults(func=cmd_kg_search)
+
+    p = sub.add_parser("zotero-search", help="在本机 Zotero 库中搜索条目并显示 PDF 路径")
+    p.add_argument("query")
+    p.add_argument("-n", "--limit", type=int, default=8)
+    p.set_defaults(func=cmd_zotero_search)
+
+    p = sub.add_parser("zotero-ingest", help="从 Zotero 条目 key 导入 PDF 到精读库")
+    p.add_argument("key", help="Zotero item key（8 位）")
+    p.add_argument("--engine", default="datalab", choices=["datalab", "local"])
+    p.add_argument("--force", action="store_true")
+    p.add_argument("--no-summary", action="store_true")
+    p.set_defaults(func=cmd_zotero_ingest)
 
     args = ap.parse_args()
     args.func(args)

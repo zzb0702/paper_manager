@@ -36,16 +36,30 @@ export default function MarkdownModal() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(5,8,12,.75)]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(4,7,11,.72)] backdrop-blur-[2px]"
       onClick={(e) => e.target === e.currentTarget && closeMarkdown()}
     >
-      <div className="flex h-[86vh] w-[min(860px,92vw)] flex-col rounded-xl border border-line bg-panel">
-        <div className="flex items-center justify-between border-b border-line px-3.5 py-2.5">
-          <b className="truncate text-[13px]">{title}</b>
-          <button className="btn" onClick={closeMarkdown}>✕</button>
+      <div className="flex h-[86vh] w-[min(860px,92vw)] flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-2xl shadow-black/50">
+        <div className="flex items-center justify-between gap-3 border-b border-line bg-raise/50 px-4 py-2.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="badge shrink-0">Markdown</span>
+            <b className="truncate text-[13px] font-medium text-ink">{title}</b>
+          </div>
+          <button className="btn btn-ghost" onClick={closeMarkdown} aria-label="关闭">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+              <path d="M2 2l8 8M10 2 2 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
         </div>
-        <div className="md-body overflow-auto px-5 py-4">
-          {md == null ? <i className="text-dim">加载中…</i> : <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>}
+        <div className="md-body overflow-auto px-6 py-5">
+          {md == null ? (
+            <div className="flex items-center gap-2 text-dim">
+              <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border border-line border-t-accent" />
+              <span className="text-xs">加载中…</span>
+            </div>
+          ) : (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+          )}
         </div>
       </div>
     </div>

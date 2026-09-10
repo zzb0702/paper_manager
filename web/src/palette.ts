@@ -2,9 +2,9 @@
 // the cluster chips and the 3D concept graph's per-paper link colors,
 // so the same paper reads as the same color everywhere.
 export const PALETTE = [
-  "#4f9cf9", "#f5a623", "#7dd87d", "#e46fb2", "#b07df9", "#5fd4d0",
-  "#f9e04f", "#f97b5f", "#9aa7b5", "#6bd66b", "#c98bf5", "#5fbef9",
-  "#f97b9c", "#8bf97b", "#f9d06b", "#6b8ef9",
+  "#5b9dff", "#f0b429", "#3ecf8e", "#e46fb2", "#b07df9", "#5fd4d0",
+  "#f0d04a", "#f07b5f", "#9aa7b5", "#5ec97a", "#c98bf5", "#5fbef9",
+  "#f07b9c", "#8bf97b", "#f0c06b", "#6b8ef9",
 ];
 
 // Mix a hex color toward white — used to keep 1px-ish lines readable on the

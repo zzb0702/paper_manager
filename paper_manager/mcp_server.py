@@ -28,6 +28,8 @@ mcp = FastMCP(
         "本地论文库：PDF 导入后转为 Markdown 并建立混合检索"
         "（FTS5 + 向量 + 重排）。先用 search_papers 广度查找，"
         "再用 read_paper_section 深入阅读，节省 token。"
+        "可选 Zotero 集成：search_zotero 找本地文献 → ingest_from_zotero "
+        "导入精读索引，无需再单独安装 zotero-mcp。"
     ),
 )
 
@@ -217,6 +219,145 @@ def related_papers(paper_id: int, top_k: int = 5) -> str:
     if len(lines) == 2:
         return f"[{paper_id}] {r['title']}：暂无库内邻居。引文数据可由 CLI fetch-citations 抓取。"
     return "\n".join(lines)
+
+
+@mcp.tool()
+def search_zotero(query: str, limit: int = 8) -> str:
+    """在本机 Zotero 文献库中按标题/作者/DOI/会议搜索条目，并尽量解析本地 PDF 路径。
+
+    与 search_papers 的区别：search_zotero 找的是 Zotero 藏书（元数据+附件路径）；
+    search_papers 搜的是 paper_manager 精读库（已导入并切块的正文）。
+    典型流程：search_zotero → ingest_from_zotero → search_papers / read_paper_section。
+
+    Args:
+        query: 标题关键词、作者姓、DOI 或 Zotero key。
+        limit: 最多返回条数，默认 8。
+    """
+    from . import zotero
+
+    try:
+        items = zotero.search(query, limit=limit)
+    except FileNotFoundError as exc:
+        return (
+            f"{exc}\n"
+            "提示：在 Zotero 中启用本机 API（设置→高级），并把数据目录保持默认；"
+            "若路径特殊，设置环境变量 ZOTERO_DB_PATH 指向 zotero.sqlite。"
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"Zotero 搜索失败: {type(exc).__name__}: {exc}"
+
+    if not items:
+        return f"Zotero 中未找到与 “{query}” 匹配的条目。"
+
+    lines = [f"Zotero 命中 {len(items)} 条：", ""]
+    for it in items:
+        year = f" ({it['year']})" if it.get("year") else ""
+        authors = (it.get("authors") or "")[:60]
+        lines.append(f"[{it['key']}] {it['title']}{year}")
+        if authors:
+            lines.append(f"  作者: {authors}")
+        if it.get("doi"):
+            lines.append(f"  DOI: {it['doi']}")
+        if it.get("publication"):
+            lines.append(f"  来源: {it['publication']}")
+        paths = it.get("pdf_paths") or []
+        if paths:
+            lines.append(f"  PDF: {paths[0]}")
+        else:
+            lines.append("  PDF: 未解析到本地附件（可用 ingest_pdf 传入绝对路径）")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+@mcp.tool()
+def get_zotero_item(key: str) -> str:
+    """读取单条 Zotero 记录的元数据与本地 PDF 路径。
+
+    Args:
+        key: Zotero item key（8 位字母数字）或数字 itemID；来自 search_zotero。
+    """
+    from . import zotero
+
+    try:
+        item = zotero.get_item(key)
+    except Exception as exc:  # noqa: BLE001
+        return f"读取 Zotero 条目失败: {type(exc).__name__}: {exc}"
+
+    if "error" in item:
+        return str(item["error"])
+
+    year = f" ({item['year']})" if item.get("year") else ""
+    lines = [
+        f"[{item['key']}] {item['title']}{year}",
+        f"类型: {item.get('item_type')}",
+    ]
+    if item.get("authors"):
+        lines.append(f"作者: {item['authors']}")
+    if item.get("doi"):
+        lines.append(f"DOI: {item['doi']}")
+    if item.get("publication"):
+        lines.append(f"来源: {item['publication']}")
+    if item.get("url"):
+        lines.append(f"URL: {item['url']}")
+    paths = item.get("pdf_paths") or []
+    if paths:
+        lines.append("本地 PDF:")
+        lines.extend(f"  - {p}" for p in paths)
+    else:
+        lines.append("本地 PDF: 无（检查是否已下载附件）")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def ingest_from_zotero(key: str, engine: str = "local") -> str:
+    """从 Zotero 条目导入 PDF 到精读库（解析本地附件路径后调用 ingest_pdf）。
+
+    幂等：同一 PDF 重复导入会返回已存在的 paper_id。导入成功后即可用
+    search_papers / read_paper_section 深读。
+
+    Args:
+        key: Zotero item key 或 itemID（用 search_zotero 获取）。
+        engine: "local"（默认，免费）或 "datalab"（高保真按页计费）。
+    """
+    from . import zotero
+    from .embedder import EmbeddingClient
+
+    try:
+        item = zotero.get_item(key)
+    except Exception as exc:  # noqa: BLE001
+        return f"读取 Zotero 条目失败: {type(exc).__name__}: {exc}"
+    if "error" in item:
+        return str(item["error"])
+
+    paths = item.get("pdf_paths") or []
+    if not paths:
+        return (
+            f"条目 [{item['key']}] {item['title'][:60]}\n"
+            "未找到本地 PDF 附件。请在 Zotero 中下载附件，或用 ingest_pdf 传入绝对路径。"
+        )
+
+    pdf_path = paths[0]
+    try:
+        report = _ingest_pdf(pdf_path, engine=engine, embedder=EmbeddingClient.from_env())
+    except Exception as exc:  # noqa: BLE001
+        return f"导入失败（{pdf_path}）: {type(exc).__name__}: {exc}"
+
+    if report["status"] == "duplicate":
+        return (
+            f"已存在于精读库（paper_id={report['paper_id']}）: {report['title']}\n"
+            f"Zotero key={item['key']}"
+        )
+    if report["status"] != "ok":
+        return str(report)
+    cost = report.get("cost_usd")
+    cost_line = f"费用: ${cost:.4f}｜" if cost is not None else ""
+    return (
+        f"从 Zotero 导入成功 paper_id={report['paper_id']}: {report['title']}\n"
+        f"Zotero key={item['key']}｜年份: {report.get('year')}｜"
+        f"DOI: {report.get('doi') or '未识别'}\n"
+        f"{cost_line}切块: {report['chunks']}｜引擎: {report['engine']}\n"
+        "后续可用 search_papers / read_paper_section 深读。"
+    )
 
 
 @mcp.tool()

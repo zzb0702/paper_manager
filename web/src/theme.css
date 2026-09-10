@@ -1,18 +1,20 @@
 @import "tailwindcss";
 
-/* Dark theme tokens carried over from the legacy single-file UI. */
+/* Dark research-instrument theme — refined layered surfaces, not a flat admin shell. */
 @theme {
-  --color-bg: #0f1419;
-  --color-panel: #161d24;
-  --color-line: #232d38;
-  --color-ink: #d8e0e8;
-  --color-dim: #7b8a99;
-  --color-accent: #4f9cf9;
-  --color-amber: #f5a623;
-  --color-ok: #58c98b;
-  --color-err: #e4574f;
-  --color-field: #0b1015;
-  --color-raise: #1d2731;
+  --color-bg: #0b0f14;
+  --color-panel: #121820;
+  --color-line: #1e2833;
+  --color-ink: #e4ecf4;
+  --color-dim: #7c8c9c;
+  --color-accent: #5b9dff;
+  --color-amber: #f0b429;
+  --color-ok: #3ecf8e;
+  --color-err: #f07178;
+  --color-field: #0a0e13;
+  --color-raise: #1a2430;
+  --font-sans:
+    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
 html,
@@ -23,77 +25,214 @@ body,
 
 body {
   @apply bg-bg text-ink;
-  font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+  font: 13px/1.55 var(--font-sans);
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Subtle app-wide vignette so side panels feel inset from the graph canvas. */
+#root > div {
+  background: radial-gradient(120% 80% at 50% 0%, #0e141c 0%, #0b0f14 55%);
 }
 
 @layer components {
   .btn {
-    @apply cursor-pointer rounded-lg border border-line bg-raise px-3 py-1.5 text-[13px] text-ink hover:border-accent disabled:cursor-wait disabled:opacity-50;
+    @apply inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md border border-line bg-raise px-2.5 py-1.5 text-[12.5px] text-ink transition-colors;
+  }
+  .btn:hover {
+    @apply border-accent/50 text-white;
+  }
+  .btn:focus-visible {
+    @apply outline-2 outline-offset-1 outline-accent;
+  }
+  .btn:disabled {
+    @apply cursor-wait opacity-50;
+  }
+  .btn-primary {
+    @apply border-accent/40 bg-accent/15 text-accent;
+  }
+  .btn-primary:hover {
+    @apply border-accent bg-accent/20 text-white;
+  }
+  .btn-ghost {
+    @apply border-transparent bg-transparent text-dim;
+  }
+  .btn-ghost:hover {
+    @apply border-line bg-raise text-ink;
   }
   .input {
-    @apply min-w-0 rounded-lg border border-line bg-field px-2.5 py-1.5 text-[13px] text-ink focus:border-accent focus:outline-none;
+    @apply min-w-0 rounded-md border border-line bg-field px-2.5 py-1.5 text-[12.5px] text-ink transition-colors placeholder:text-dim/70;
+  }
+  .input:hover {
+    @apply border-line/80;
+  }
+  .input:focus {
+    @apply border-accent/60 outline-none ring-1 ring-accent/30;
   }
   .sect-title {
-    @apply mb-2 text-xs uppercase tracking-wider text-accent;
+    @apply mb-2.5 flex items-center gap-2 text-[10.5px] font-semibold tracking-[0.12em] text-dim uppercase;
+  }
+  .sect-title::after {
+    content: "";
+    @apply h-px flex-1 bg-line;
   }
   .mini-label {
-    @apply my-1.5 block text-xs text-dim;
+    @apply mt-2.5 mb-1.5 block text-[11px] text-dim;
   }
   .chip {
-    @apply mb-1.5 mr-1.5 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line px-2.5 py-0.5 text-xs;
+    @apply mb-1.5 mr-1.5 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-field px-2.5 py-1 text-[11.5px] text-dim transition-colors;
+  }
+  .chip:hover {
+    @apply border-dim/50 text-ink;
   }
   .chip-on {
-    @apply border-accent bg-raise;
+    @apply border-accent/60 bg-accent/10 text-accent;
   }
   .card {
-    @apply mb-1.5 cursor-pointer rounded-lg border border-line bg-field px-2.5 py-2 hover:border-accent;
+    @apply mb-1.5 cursor-pointer rounded-md border border-line bg-field/60 px-2.5 py-2 transition-colors;
+  }
+  .card:hover {
+    @apply border-accent/40 bg-raise;
   }
   .rel {
-    @apply cursor-pointer rounded-md px-2 py-1 text-xs hover:bg-raise;
+    @apply -mx-1.5 cursor-pointer rounded-md px-2 py-1.5 text-xs text-ink/90 transition-colors hover:bg-raise;
   }
   .badge {
-    @apply mr-1 inline-block whitespace-nowrap rounded-md border border-line px-1.5 py-px text-[11px] text-dim;
+    @apply inline-flex items-center rounded border border-line bg-field/80 px-1.5 py-px text-[10.5px] tracking-wide text-dim;
   }
   .summary-box {
-    @apply my-2 rounded-lg border border-line bg-field p-2.5;
+    @apply my-2.5 rounded-md border border-accent/20 bg-accent/[0.06] p-3 text-[12.5px] leading-relaxed text-ink/90;
+  }
+  .panel-shell {
+    @apply bg-panel/95;
   }
 }
 
-/* Markdown viewer typography (legacy #modalBody rules). */
+/* Floating view segmented control */
+.view-seg {
+  @apply inline-flex overflow-hidden rounded-lg border border-line bg-panel/90 shadow-lg shadow-black/30 backdrop-blur-md;
+}
+.view-seg button {
+  @apply border-none bg-transparent px-3.5 py-1.5 text-xs text-dim transition-colors;
+}
+.view-seg button:hover {
+  @apply text-ink;
+}
+.view-seg button + button {
+  @apply border-l border-line;
+}
+.view-seg button[data-on="1"] {
+  @apply bg-raise text-ink;
+}
+
+/* Custom checkbox accent */
+input[type="checkbox"] {
+  accent-color: var(--color-accent);
+}
+input[type="range"] {
+  accent-color: var(--color-accent);
+}
+
+/* Native select on dark bg */
+select.input {
+  @apply cursor-pointer appearance-none bg-field pr-7;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%237c8c9c' d='M3 4.5 6 8l3-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+/* Scrollbars — thin, instrument-like */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3644 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2a3644;
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #3a4a5c;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Empty-state glyph */
+.empty-orb {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(91, 157, 255, 0.25), transparent 55%),
+    radial-gradient(circle at 70% 70%, rgba(240, 180, 41, 0.12), transparent 50%),
+    var(--color-raise);
+  border: 1px solid var(--color-line);
+}
+
+/* Markdown viewer typography */
 .md-body {
-  @apply text-[13px];
+  @apply text-[13.5px] leading-relaxed;
 }
 .md-body h1,
 .md-body h2,
 .md-body h3 {
-  @apply my-3 font-semibold;
+  @apply mt-5 mb-2 font-semibold text-ink;
 }
-.md-body h1 { font-size: 19px; }
-.md-body h2 { font-size: 16px; }
-.md-body h3 { font-size: 14px; }
+.md-body h1 {
+  font-size: 20px;
+  @apply border-b border-line pb-1.5;
+}
+.md-body h2 {
+  font-size: 16px;
+}
+.md-body h3 {
+  font-size: 14px;
+}
 .md-body p {
-  @apply my-1.5;
+  @apply my-2 text-ink/90;
 }
 .md-body ul {
-  @apply my-1.5 list-disc pl-6;
+  @apply my-2 list-disc space-y-1 pl-5;
 }
 .md-body ol {
-  @apply my-1.5 list-decimal pl-6;
+  @apply my-2 list-decimal space-y-1 pl-5;
+}
+.md-body li {
+  @apply text-ink/90;
 }
 .md-body pre {
-  @apply my-2 overflow-x-auto rounded-md bg-field p-2;
+  @apply my-3 overflow-x-auto rounded-md border border-line bg-field p-3;
 }
 .md-body code {
-  @apply rounded bg-field px-1 py-px;
+  @apply rounded bg-field px-1 py-0.5 font-mono text-[12px];
 }
 .md-body table {
-  @apply my-2 border-collapse text-xs;
+  @apply my-3 w-full border-collapse text-xs;
 }
 .md-body th,
 .md-body td {
-  @apply border border-line px-2 py-1;
+  @apply border border-line px-2 py-1.5 text-left;
+}
+.md-body th {
+  @apply bg-raise/60 font-medium text-ink;
 }
 .md-body a {
-  @apply text-accent underline;
+  @apply text-accent underline underline-offset-2;
+}
+.md-body blockquote {
+  @apply my-2 border-l-2 border-accent/40 pl-3 text-dim italic;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

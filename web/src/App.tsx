@@ -14,14 +14,15 @@ function ViewToggle() {
   const setView = useApp((s) => s.setView);
   const btn = (mode: ViewMode, label: string) => (
     <button
-      className={`rounded-none border-none bg-panel px-3.5 py-1.5 text-dim ${viewMode === mode ? "bg-raise text-ink" : ""}`}
+      key={mode}
+      data-on={viewMode === mode ? "1" : "0"}
       onClick={() => setView(mode)}
     >
       {label}
     </button>
   );
   return (
-    <div className="absolute top-2.5 left-2.5 z-10 flex overflow-hidden rounded-lg">
+    <div className="view-seg absolute top-3 left-3 z-10">
       {btn("timeline", "时间轴")}
       {btn("force", "关系图")}
       {btn("kg", "概念图")}
@@ -69,9 +70,12 @@ export default function App() {
           <ViewToggle />
           {viewMode === "kg" ? <ConceptGraph3D /> : <PaperGraph2D />}
           {viewMode !== "kg" && graph.nodes.length === 0 && (
-            <div className="absolute inset-0 z-[4] flex flex-col items-center justify-center gap-2.5 text-dim">
-              <div className="text-[40px]">📚</div>
-              <div>论文库为空 — 点右上角「📥 导入 PDF」开始</div>
+            <div className="pointer-events-none absolute inset-0 z-[4] flex flex-col items-center justify-center gap-3 text-dim">
+              <div className="empty-orb" />
+              <div className="text-[13px] text-ink/70">论文库还是空的</div>
+              <div className="text-[12px]">
+                点右上角「导入 PDF」开始建库
+              </div>
             </div>
           )}
         </div>
