@@ -16,7 +16,8 @@ top-k 片段注入）与 [LightRAG](https://github.com/HKUDS/LightRAG)（概念�
   → 元数据抽取（标题/作者/年份/DOI）→ LLM 摘要卡 → 章节感知切块 → bge-m3 向量；
 - **两阶段检索**：PaperQA2 风格"论文级召回 → 章节级聚合"，LLM 查询改写 + RRF + 重排；
 - **全链路降级**：无 Embedding → 纯 FTS5；无 LLM → 跳过摘要卡；断网/欠费时库依然可检索；
-- **MCP 服务**：4 个工具（stdio / HTTP 双模式），任何 MCP 客户端即插即用；
+- **MCP 服务**：7 个工具（stdio / HTTP 双模式），任何 MCP 客户端即插即用；
+- **Zotero 集成**：本机 zotero.sqlite 只读检索 → 一键导入精读库，无需另装 zotero-mcp；
 - **引文图**：OpenAlex（免 key）+ Semantic Scholar 备用，库内引用关系自动连线；
 - **概念图**：LightRAG 式 LLM 实体/关系抽取 + "概念 → 章节证据"双层检索；
 - **可视化**：Gephi Lite 式三栏界面（时间轴 / 引文关系图 / 3D 概念图），
