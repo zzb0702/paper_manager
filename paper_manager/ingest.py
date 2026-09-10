@@ -144,12 +144,32 @@ def ingest_pdf(
     ) or markdown[:1500]
     db.upsert_paper_index(conn, paper_id, index_text, paper_vector)
 
+    # Best-effort post-ingest fixes: missing authors via OpenAlex/S2,
+    # missing summary via one more LLM call. Never fails the ingest.
+    authors, year, summary, index_dirty = enrich_after_ingest(
+        conn,
+        paper_id=paper_id,
+        title=title,
+        authors=authors,
+        year=year,
+        doi=doi,
+        abstract=abstract,
+        summary=summary,
+        front=front,
+        make_summary=make_summary,
+    )
+    if index_dirty:
+        paper = db.get_paper(conn, paper_id)
+        if paper:
+            db.upsert_paper_fts(conn, paper_id, db.paper_index_text(paper))
+
     log(f"[5/5] 入库完成: paper_id={paper_id}, {n} chunks")
     conn.close()
     return {
         "status": "ok",
         "paper_id": paper_id,
         "title": title,
+        "authors": authors,
         "year": year,
         "doi": doi,
         "chunks": n,
@@ -159,6 +179,120 @@ def ingest_pdf(
         "cost_usd": conv.get("cost_usd"),
         "paper_vector": paper_vector is not None,
     }
+
+
+def enrich_after_ingest(
+    conn: Any,
+    *,
+    paper_id: int,
+    title: str,
+    authors: str,
+    year: int | None,
+    abstract: str,
+    summary: str,
+    front: str,
+    doi: str = "",
+    make_summary: bool = True,
+    force_summary: bool = False,
+) -> tuple[str, int | None, str, bool]:
+    """Fill empty authors / summary after insert. Returns updated fields + dirty flag."""
+    dirty = False
+    authors = (authors or "").strip()
+    summary = (summary or "").strip()
+
+    if not authors:
+        try:
+            from . import scholar
+
+            meta = scholar.lookup_metadata(title, doi=doi or "")
+            if meta and meta.get("authors"):
+                authors = str(meta["authors"]).strip()[:300]
+                db.set_authors(conn, paper_id, authors)
+                if meta.get("year") and not year:
+                    year = int(meta["year"])
+                    conn.execute(
+                        "UPDATE papers SET year = ? WHERE id = ?", (year, paper_id)
+                    )
+                    conn.commit()
+                dirty = True
+                log(f"  [元数据补齐] 作者来自 {meta.get('source')}: {authors[:60]}")
+        except Exception as exc:
+            log(f"  [元数据补齐跳过] {type(exc).__name__}: {str(exc)[:120]}")
+
+    if make_summary and (force_summary or not summary):
+        summary = summarize_paper(abstract and (title + "\n" + abstract) or front) or ""
+        if summary:
+            conn.execute(
+                "UPDATE papers SET summary = ? WHERE id = ?", (summary, paper_id)
+            )
+            conn.commit()
+            dirty = True
+            log(f"  [摘要补齐] {len(summary)} chars")
+
+    return authors, year, summary, dirty
+
+
+def enrich_library(
+    conn: Any,
+    paper_ids: list[int] | None = None,
+    *,
+    force: bool = False,
+) -> list[dict[str, Any]]:
+    """Backfill authors (OpenAlex/S2) and empty summaries for existing papers."""
+    if paper_ids:
+        qmarks = ",".join("?" * len(paper_ids))
+        rows = conn.execute(
+            f"SELECT id, title, authors, year, doi, abstract, summary, md_path "
+            f"FROM papers WHERE id IN ({qmarks}) ORDER BY id",
+            paper_ids,
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, title, authors, year, doi, abstract, summary, md_path "
+            "FROM papers ORDER BY id"
+        ).fetchall()
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        pid = row["id"]
+        authors = (row["authors"] or "").strip()
+        summary = (row["summary"] or "").strip()
+        year = row["year"]
+        entry: dict[str, Any] = {"paper_id": pid, "title": row["title"], "status": "skip"}
+        need_auth = force or not authors
+        need_sum = force or not summary
+        if not (need_auth or need_sum):
+            out.append(entry)
+            continue
+
+        front = ""
+        if row["md_path"] and Path(row["md_path"]).is_file():
+            front = Path(row["md_path"]).read_text(encoding="utf-8", errors="replace")[:4000]
+
+        authors2, year2, summary2, dirty = enrich_after_ingest(
+            conn,
+            paper_id=pid,
+            title=row["title"] or "",
+            # force=True 时清空作者，强制走 OpenAlex/S2 重查
+            authors="" if force else authors,
+            year=year,
+            doi=row["doi"] or "",
+            abstract=row["abstract"] or "",
+            summary="" if force else summary,
+            front=front or (row["abstract"] or ""),
+            make_summary=need_sum or force,
+            force_summary=force,
+        )
+        if dirty:
+            entry["status"] = "updated"
+            entry["authors"] = authors2
+            entry["year"] = year2
+            entry["summary_chars"] = len(summary2 or "")
+            paper = db.get_paper(conn, pid)
+            if paper:
+                db.upsert_paper_fts(conn, pid, db.paper_index_text(paper))
+        out.append(entry)
+    return out
 
 
 def ingest_dir(
@@ -231,12 +365,8 @@ def refresh_metadata(
         if title_changed or auth_changed:
             # keep stage-1 FTS in sync with the new title/authors
             paper = conn.execute("SELECT * FROM papers WHERE id = ?", (pid,)).fetchone()
-            abstract = paper["abstract"] or ""
-            summary = paper["summary"] or ""
-            index_text = " / ".join(
-                p for p in (paper["title"], paper["authors"], abstract, summary) if p
-            )
-            db.upsert_paper_fts(conn, pid, index_text)
+            if paper:
+                db.upsert_paper_fts(conn, pid, db.paper_index_text(paper))
             entry["status"] = "updated"
         out.append(entry)
     return out

@@ -259,6 +259,29 @@ def cmd_refresh_meta(args: argparse.Namespace) -> None:
         conn.close()
 
 
+def cmd_enrich(args: argparse.Namespace) -> None:
+    """Fill empty authors (OpenAlex/S2) and summaries (LLM) for existing papers."""
+    from paper_manager.ingest import enrich_library
+
+    conn = db.connect()
+    try:
+        ids = [args.paper_id] if args.paper_id else None
+        reports = enrich_library(conn, ids, force=args.force)
+        for r in reports:
+            if r.get("status") == "updated":
+                print(f"[updated] #{r['paper_id']} {r['title'][:50]}")
+                if r.get("authors"):
+                    print(f"          authors: {r['authors'][:70]}")
+                if r.get("summary_chars"):
+                    print(f"          summary: {r['summary_chars']} chars")
+            else:
+                print(f"[{r.get('status')}] #{r['paper_id']} {(r.get('title') or '')[:50]}")
+        n = sum(1 for r in reports if r.get("status") == "updated")
+        print(f"完成：更新 {n} / 共 {len(reports)}")
+    finally:
+        conn.close()
+
+
 def cmd_zotero_search(args: argparse.Namespace) -> None:
     from paper_manager import zotero
 
@@ -350,6 +373,14 @@ def main() -> None:
     p.add_argument("paper_id", type=int, nargs="?", default=None, help="只处理指定论文")
     p.add_argument("--force", action="store_true", help="即使已有作者/标题也覆盖")
     p.set_defaults(func=cmd_refresh_meta)
+
+    p = sub.add_parser(
+        "enrich",
+        help="补齐缺失作者（OpenAlex/S2）与摘要卡（LLM），可对存量论文批量跑",
+    )
+    p.add_argument("paper_id", type=int, nargs="?", default=None, help="只处理指定论文")
+    p.add_argument("--force", action="store_true", help="已有作者/摘要也重新拉取与生成")
+    p.set_defaults(func=cmd_enrich)
 
     p = sub.add_parser("fetch-citations", help="从 Semantic Scholar 抓取引文关系")
     p.add_argument("paper_id", type=int, nargs="?", default=None)

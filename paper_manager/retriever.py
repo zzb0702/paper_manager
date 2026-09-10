@@ -37,7 +37,7 @@ FETCH = 30               # per-query per-channel fetch depth
 FILTER_OVERFETCH = 200   # deeper pools when metadata filtering is active
 SNIPPET_CHARS = 400
 AGG_BOOST = 0.10         # per extra matched chunk, capped at 5 extras
-MAX_QUERIES = 4          # original + up to 3 rewritten variants
+MAX_QUERIES = 5          # original + up to 4 rewritten/expanded variants
 
 QueryRewriter = Callable[[str], "list[str] | None"]
 
@@ -193,7 +193,14 @@ def _paper_filter(
 def _expand_queries(
     query: str, query_rewriter: QueryRewriter | None
 ) -> list[str]:
+    from .llm import expand_query_offline
+
     queries = [query]
+    # Offline glossary first — works without LLM and costs nothing.
+    for v in expand_query_offline(query):
+        v = str(v).strip()
+        if v and v not in queries:
+            queries.append(v)
     if query_rewriter is not None:
         try:
             variants = query_rewriter(query) or []
@@ -201,7 +208,7 @@ def _expand_queries(
             variants = []
         for v in variants:
             v = str(v).strip()
-            if v and v != query and v not in queries:
+            if v and v not in queries:
                 queries.append(v)
     return queries[:MAX_QUERIES]
 
@@ -461,8 +468,10 @@ def related_papers(
     """Neighbors of a paper: citation graph (library-internal) + semantic
     neighbors via paper vectors. Powers the MCP related_papers tool and
     the UI detail panel."""
-    neighbors = db.library_neighbors(conn, paper_id)
     row = db.get_paper(conn, paper_id)
+    if row is None:
+        raise ValueError(f"paper_id={paper_id} 不存在")
+    neighbors = db.library_neighbors(conn, paper_id)
 
     def _cards(pids: list[int]) -> list[dict[str, Any]]:
         cards = []
@@ -492,16 +501,21 @@ def related_papers(
                 order = [
                     i for i in np.argsort(-scores)
                     if int(ids[i]) != paper_id
-                ][:top_k]
-                semantic = [
-                    {
-                        "paper_id": int(ids[i]),
-                        "title": db.get_paper(conn, int(ids[i]))["title"],
-                        "year": db.get_paper(conn, int(ids[i]))["year"],
-                        "similarity": round(float(scores[i]), 3),
-                    }
-                    for i in order
-                ]
+                ][:top_k * 2]
+                for i in order:
+                    if len(semantic) >= top_k:
+                        break
+                    p = db.get_paper(conn, int(ids[i]))
+                    if not p:
+                        continue
+                    semantic.append(
+                        {
+                            "paper_id": int(ids[i]),
+                            "title": p["title"],
+                            "year": p["year"],
+                            "similarity": round(float(scores[i]), 3),
+                        }
+                    )
         except Exception:
             pass
 

@@ -255,6 +255,55 @@ def _fetch_s2(title: str, doi: str) -> dict[str, Any] | None:
 
 # ------------------------------------------------------------------ entry
 
+def lookup_metadata(title: str, doi: str = "") -> dict[str, Any] | None:
+    """Lightweight author/year lookup without downloading the citation graph."""
+    try:
+        work = _resolve_work(title, doi)
+    except Exception as exc:
+        log(f"  [lookup] OpenAlex 失败: {str(exc)[:120]}")
+        work = None
+    if work:
+        year = work.get("publication_year")
+        authors = _oa_authors(work)
+        if authors or year:
+            return {
+                "authors": authors,
+                "year": int(year) if year else None,
+                "source": "openalex",
+            }
+    # Semantic Scholar: DOI lookup first, then title search
+    try:
+        r0 = None
+        if doi:
+            r0 = _s2_get(
+                f"{S2_BASE}/paper/DOI:{doi}",
+                {"fields": "title,year,authors"},
+            )
+        if not r0:
+            data = _s2_get(
+                f"{S2_BASE}/paper/search",
+                {"query": title[:200], "fields": "title,year,authors", "limit": 5},
+            )
+            for item in (data or {}).get("data") or []:
+                if _title_fuzzy(item.get("title") or "", title):
+                    r0 = item
+                    break
+            if not r0 and (data or {}).get("data"):
+                r0 = data["data"][0]
+        if r0:
+            authors = ", ".join(
+                a.get("name") for a in r0.get("authors") or [] if a.get("name")
+            )
+            return {
+                "authors": authors,
+                "year": r0.get("year"),
+                "source": "s2",
+            }
+    except Exception as exc:
+        log(f"  [lookup] S2 失败: {str(exc)[:120]}")
+    return None
+
+
 def fetch_citations(conn, paper_id: int) -> dict[str, Any]:
     """Fetch and store the citation neighborhood of one library paper."""
     row = db.get_paper(conn, paper_id)

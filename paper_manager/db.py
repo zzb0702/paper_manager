@@ -258,14 +258,19 @@ def papers_missing_fts(conn: sqlite3.Connection) -> list[int]:
 
 def papers_missing_vectors(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT p.id, p.title, p.abstract, p.summary FROM papers p "
+        "SELECT p.id, p.title, p.authors, p.abstract, p.summary FROM papers p "
         "LEFT JOIN paper_vectors v ON v.paper_id = p.id WHERE v.paper_id IS NULL"
     ).fetchall()
 
 
 def paper_index_text(row: sqlite3.Row) -> str:
-    parts = [row["title"], "", row["abstract"], row["summary"]]
-    return "\n".join(p or "" for p in parts).strip()
+    # Match ingest's index_text join so FTS/vector content stays consistent.
+    keys = row.keys()
+    parts = [row["title"]]
+    if "authors" in keys:
+        parts.append(row["authors"] or "")
+    parts.extend([row["abstract"], row["summary"]])
+    return " / ".join(p or "" for p in parts).strip(" /")
 
 
 def search_papers_fts(

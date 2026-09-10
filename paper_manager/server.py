@@ -34,6 +34,24 @@ WEB_DIST = Path(ROOT) / "web" / "dist"
 
 _SIM_THRESHOLD = 0.55
 _SIM_TOP = 2
+_REWRITE_CACHE: dict[str, list[str] | None] = {}
+
+
+def _rewriter():
+    """Process-cached bilingual query rewriter; None when LLM env missing."""
+    import os
+
+    if not os.getenv("LLM_BASE_URL", "").strip():
+        return None
+
+    from .llm import rewrite_query
+
+    def _rewrite(q: str) -> list[str] | None:
+        if q not in _REWRITE_CACHE:
+            _REWRITE_CACHE[q] = rewrite_query(q)
+        return _REWRITE_CACHE[q]
+
+    return _rewrite
 
 
 @app.get("/api/status")
@@ -229,6 +247,7 @@ def search(q: str, top_k: int = 8) -> dict:
             top_k=max(1, min(top_k, 20)),
             embedder=EmbeddingClient.from_env(),
             reranker=RerankerClient.from_env(),
+            query_rewriter=_rewriter(),
         )
         return {"hits": hits}
     finally:

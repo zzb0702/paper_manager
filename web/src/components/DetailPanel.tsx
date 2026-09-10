@@ -89,7 +89,18 @@ function PaperPanel({ pid }: { pid: number }) {
 
   function reload() {
     setError(null);
-    api.paper(pid).then(setDetail).catch((e) => setError(String(e)));
+    let dead = false;
+    api
+      .paper(pid)
+      .then((p) => {
+        if (!dead) setDetail(p);
+      })
+      .catch((e) => {
+        if (!dead) setError(String(e));
+      });
+    return () => {
+      dead = true;
+    };
   }
 
   if (error) return <p className="mt-8 text-err">{error}</p>;

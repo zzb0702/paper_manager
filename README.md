@@ -41,6 +41,9 @@ python cli.py status
 
 # 从已存 Markdown 重抽标题/作者（不重切块；修「佚名」/截断标题）
 python cli.py refresh-meta
+
+# 补齐缺失作者（OpenAlex/S2）与摘要卡（LLM）；--force 连已有字段也重拉
+python cli.py enrich
 ```
 
 ## 数据流

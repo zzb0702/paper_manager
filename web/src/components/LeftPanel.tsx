@@ -21,6 +21,7 @@ function SearchPanel() {
   const [busy, setBusy] = useState(false);
 
   async function go() {
+    if (busy) return;
     const query = q.trim();
     if (!query) {
       setHits(null);
@@ -47,7 +48,7 @@ function SearchPanel() {
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && go()}
         />
-        <button className="btn" onClick={go}>搜</button>
+        <button className="btn" onClick={go} disabled={busy}>搜</button>
       </div>
       {busy && (
         <div className="card text-dim">
